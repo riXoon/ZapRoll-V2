@@ -1,0 +1,138 @@
+flowchart TD;
+    %% Styling Definitions
+    classDef admin fill:#FDEBD0,stroke:#E67E22,stroke-width:2px,color:#000;
+    classDef participant fill:#D6EAF8,stroke:#3498DB,stroke-width:2px,color:#000;
+    classDef decision fill:#FCF3CF,stroke:#F1C40F,stroke-width:2px,color:#000;
+    classDef system fill:#E8DAEF,stroke:#9B59B6,stroke-width:2px,color:#000;
+    classDef error fill:#FADBD8,stroke:#E74C3C,stroke-width:2px,color:#000;
+    classDef database fill:#D5F5E3,stroke:#2ECC71,stroke-width:2px,color:#000;
+
+    %% TERMINATOR: Start
+    Admin(["🧑‍💼 Event Manager / Admin"]):::admin;
+
+    %% PHASE 1
+    subgraph Phase1 ["⚙️ Phase 1: Configuration"]
+        CreateEvent["Create Event<br/>(Name, Venue, Date)"]:::admin;
+        SetTotalCap["Set/Update Overall<br/>Venue Capacity"]:::admin;
+        SetRoleCap["Set Capacity per Role<br/>(e.g., Student = 350)"]:::admin;
+        CalcDisplayCap["System Subtracts Role Capacity &<br/>Displays Remaining Capacity"]:::system;
+        SetRules["Set Year-Level Filters<br/>& Session Times"]:::admin;
+        SetRegWindow["Define Registration Windows"]:::admin;
+        PreRegQR[\"📱 Output: Generate Pre-Reg QR"\]:::system;
+        
+        CreateEvent --> SetTotalCap --> SetRoleCap --> CalcDisplayCap;
+        CalcDisplayCap -.->|Admin assigns remaining<br/>capacity to other roles| SetRoleCap;
+        CalcDisplayCap --> SetRules --> SetRegWindow --> PreRegQR;
+    end;
+    
+    Admin --> CreateEvent;
+    PreRegQR -->|Distribute to| Faculty;
+
+    %% PHASE 2
+    subgraph Phase2 ["📝 Phase 2: Pre-Registration"]
+        Faculty["Faculty Distribution"]:::admin;
+        ScanPre[/"Participant Scans QR"/]:::participant;
+        CapCheck{"Capacity<br/>Full?"}:::decision;
+        
+        %% Trigger for Walk-ins
+        PreRegEnded["Pre-Registration Closed"]:::system;
+        
+        RoleCheck{"Select Role"}:::decision;
+        YearLevel{"3rd Year or<br/>4th Year?"}:::decision;
+        
+        %% New 4th Year Presentation Checks
+        PresentationType{"Poster or<br/>Colloquium?"}:::decision;
+        ColloquiumRole{"Audience or<br/>Presenter?"}:::decision;
+        
+        StudForm[/"Student Form<br/>(Student ID, Name, Section)"/]:::participant;
+        PresForm[/"Presenter Form<br/>(Rep Name, Grp Num, Section, Capstone Title)"/]:::participant;
+        EmpForm[/"Employee Form<br/>(Name, Dept)"/]:::participant;
+        GuestForm[/"Guest Form<br/>(Name, Category)"/]:::participant;
+        
+        DupCheck{"Is ID<br/>Unique?"}:::decision;
+        Error(["⚠️ Already Registered"]):::error;
+        
+        %% DATABASE 1
+        PreRegDB[("💾 Pre-Reg Database")]:::database;
+        
+        Faculty --> ScanPre --> CapCheck;
+        CapCheck -- "Yes" --> PreRegEnded;
+        CapCheck -- "No" --> RoleCheck;
+        
+        RoleCheck -- "Student" --> YearLevel;
+        RoleCheck -- "Employee" --> EmpForm;
+        RoleCheck -- "Guest" --> GuestForm;
+        
+        YearLevel -- "3rd Year" --> StudForm;
+        YearLevel -- "4th Year" --> PresentationType;
+        
+        PresentationType -- "Poster Presentation" --> PresForm;
+        PresentationType -- "Colloquium Presentation" --> ColloquiumRole;
+        
+        ColloquiumRole -- "Colloquium Audience" --> StudForm;
+        ColloquiumRole -- "Colloquium Presenter" --> PresForm;
+        
+        StudForm & PresForm & EmpForm & GuestForm --> DupCheck;
+        DupCheck -- "No" --> Error;
+        DupCheck -- "Yes" --> PreRegDB;
+    end;
+
+    %% Connectors to Phase 3
+    PreRegDB -->|Trigger Event Day| DayOfQR;
+    PreRegEnded -->|Initiates Walk-in Phase| GenWalkInQR;
+
+    %% PHASE 3
+    subgraph Phase3 ["🎟️ Phase 3: Live Event Execution"]
+        %% Reserved Flow
+        DayOfQR[\"📱 Output: Generate Event-Day QR"\]:::system;
+        PostQR["Post QR at Venue"]:::admin;
+        ScanDay[/"Participant Scans Day-QR"/]:::participant;
+        TimeGate{"Before<br/>8:45 AM?"}:::decision;
+        IDVerify{"ID found in<br/>Pre-Reg DB?"}:::decision;
+        
+        %% Walk-In Flow
+        GenWalkInQR[\"📱 Output: Generate Walk-In QR"\]:::system;
+        PostWalkInQR["Staff Posts Walk-In QR at Desk"]:::admin;
+        ScanWalkIn[/"Participant Scans Walk-In QR"/]:::participant;
+        WalkInForm[/"Walk-In Form<br/>(ID, Name, Yr/Sec)"/]:::participant;
+        
+        %% DATABASE 2
+        WalkInDB[("💾 Walk-In Database<br/>(Separated)")]:::database;
+        
+        Ticket[\"🎫 Output: Confirmation Ticket<br/>(One-Time Visual Proof)"\]:::system;
+        DoorCheck["Staff Manual Entry Check"]:::admin;
+        
+        %% Reserved Logic
+        DayOfQR --> PostQR --> ScanDay --> TimeGate;
+        TimeGate -- "Yes" --> IDVerify;
+        
+        %% Routing to Walk-In Logic
+        TimeGate -- "No (Late)" --> ScanWalkIn;
+        IDVerify -- "No (Unregistered)" --> ScanWalkIn;
+        
+        %% Walk-In Execution
+        GenWalkInQR --> PostWalkInQR --> ScanWalkIn;
+        ScanWalkIn --> WalkInForm --> WalkInDB;
+        
+        %% Merging back to entry
+        IDVerify -- "Yes" --> Ticket;
+        WalkInDB -->|Granted Entry| Ticket;
+        Ticket --> DoorCheck;
+    end;
+
+    DoorCheck -->|Post-Session Transition| EvalPhase;
+
+    %% PHASE 4
+    subgraph Phase4 ["📊 Phase 4: Closing & Analytics"]
+        EvalPhase[\"Admin Displays Evaluation QR"\]:::admin;
+        ScanEval[/"Participant Scans & Submits Eval"/]:::participant;
+        UpdateStatus["Link ID to 'Eval Completed'"]:::system;
+        CertList["Admin Generates Cert Whitelist"]:::admin;
+        Reports[\"📈 Output: Final Reports & Analytics<br/>(Visual Graphs by Role)"\]:::system;
+        
+        EvalPhase --> ScanEval --> UpdateStatus --> CertList --> Reports;
+    end;
+
+    %% Data Lines for Analytics
+    PreRegDB -.->|Reserved Data| Reports;
+    WalkInDB -.->|Walk-in Data| Reports;
