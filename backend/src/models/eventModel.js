@@ -7,31 +7,91 @@ const supabase = require('../config/supabase');
 
 const getAllEvents = async (adminId) => {
   // Fetch events with their quotas and stats
-  const { data, error } = await supabase
-    .from('events')
-    .select(`
-      *,
-      event_quotas(*, registrations(count)),
-      registrations(count)
-    `)
-    .eq('created_by', adminId)
-    .order('event_date', { ascending: false });
+    const { data, error } = await supabase
+      .from('events')
+      .select(`
+        *,
+        event_quotas(*, registrations(count)),
+        registrations(count),
+        attendance(*, registrations!participant_id(quota_id, reg_type)),
+        sessions(*)
+      `)
+      .eq('created_by', adminId)
+      .order('event_date', { ascending: false });
 
-  if (error) throw error;
+    if (error) {
+      if (error.code === 'PGRST204' || error.code === '42P01') {
+        // Attendance table might not exist yet, fallback to fetching without it
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from('events')
+          .select(`
+            *,
+            event_quotas(*, registrations(count)),
+            registrations(count)
+          `)
+          .eq('created_by', adminId)
+          .order('event_date', { ascending: false });
+        
+        if (fallbackError) throw fallbackError;
+        return fallbackData.map(event => ({
+          ...event,
+          student_am_count: 0,
+          student_pm_count: 0,
+          employee_reg_count: 0,
+          event_quotas: (event.event_quotas || []).map(q => ({
+            ...q,
+            used_capacity: q.registrations[0]?.count || 0
+          })),
+          stats: {
+            total_registrations: event.registrations[0]?.count || 0,
+            total_attended: 0,
+            total_pending: event.registrations[0]?.count || 0
+          }
+        }));
+      }
+      throw error;
+    }
   
   // Post-process to flatten stats and counts
-  return data.map(event => ({
-    ...event,
-    event_quotas: (event.event_quotas || []).map(q => ({
-      ...q,
-      used_capacity: q.registrations[0]?.count || 0
-    })),
-    stats: {
-      total_registrations: event.registrations[0]?.count || 0,
-      total_attended: 0, 
-      total_pending: event.registrations[0]?.count || 0
-    }
-  }));
+  return data.map(event => {
+    const amCount = (event.attendance || []).filter(a => a.am_scanned_at).length;
+    const pmCount = (event.attendance || []).filter(a => a.pm_scanned_at).length;
+    const empCount = (event.attendance || []).filter(a => a.employee_scanned_at).length;
+    
+    // Breakdown by registration type
+    const preRegTurnout = (event.attendance || []).filter(a => a.registrations?.reg_type === 'pre-reg').length;
+    const walkinTurnout = (event.attendance || []).filter(a => a.registrations?.reg_type === 'walk-in').length;
+    
+    const uniqueAttendeeIds = new Set((event.attendance || []).map(a => a.participant_id));
+
+    return {
+      ...event,
+      student_am_count: amCount,
+      student_pm_count: pmCount,
+      employee_reg_count: empCount,
+      event_quotas: (event.event_quotas || []).map(q => {
+        // Calculate how many UNIQUE people in THIS role have attended ANY session
+        const roleAttendees = (event.attendance || []).filter(a => {
+          return a.registrations?.quota_id === q.id;
+        });
+        
+        const uniqueRoleAttendees = new Set(roleAttendees.map(a => a.participant_id)).size;
+
+        return {
+          ...q,
+          used_capacity: q.registrations[0]?.count || 0,
+          attended_count: uniqueRoleAttendees
+        };
+      }),
+      stats: {
+        total_registrations: event.registrations[0]?.count || 0,
+        total_attended: uniqueAttendeeIds.size, 
+        pre_reg_turnout: preRegTurnout,
+        walkin_turnout: walkinTurnout,
+        total_pending: Math.max(0, (event.registrations[0]?.count || 0) - uniqueAttendeeIds.size)
+      }
+    };
+  });
 };
 
 const getEventById = async (eventId, adminId) => {
@@ -41,7 +101,8 @@ const getEventById = async (eventId, adminId) => {
       *,
       event_quotas(*, registrations(count)),
       registrations(count),
-      sessions(*)
+      sessions(*),
+      attendance(*, registrations!participant_id(quota_id, reg_type))
     `)
     .eq('id', eventId)
     .eq('created_by', adminId)
@@ -49,19 +110,62 @@ const getEventById = async (eventId, adminId) => {
 
   if (error) {
     if (error.code === 'PGRST116') return null;
+    if (error.code === 'PGRST204' || error.code === '42P01') {
+      // Fallback for missing attendance table
+      const { data: fallbackData, error: fallbackError } = await supabase
+        .from('events')
+        .select(`
+          *,
+          event_quotas(*, registrations(count)),
+          registrations(count),
+          sessions(*)
+        `)
+        .eq('id', eventId)
+        .eq('created_by', adminId)
+        .single();
+      
+      if (fallbackError) throw fallbackError;
+      return {
+        ...fallbackData,
+        student_am_count: 0,
+        student_pm_count: 0,
+        employee_reg_count: 0,
+        event_quotas: (fallbackData.event_quotas || []).map(q => ({
+          ...q,
+          used_capacity: q.registrations[0]?.count || 0
+        })),
+        stats: {
+          total_registrations: fallbackData.registrations[0]?.count || 0,
+          total_attended: 0,
+          total_pending: fallbackData.registrations[0]?.count || 0
+        }
+      };
+    }
     throw error;
   }
   
+  const amCount = (data.attendance || []).filter(a => a.am_scanned_at).length;
+  const pmCount = (data.attendance || []).filter(a => a.pm_scanned_at).length;
+  const empCount = (data.attendance || []).filter(a => a.employee_scanned_at).length;
+
+  const preRegTurnout = (data.attendance || []).filter(a => a.registrations?.reg_type === 'pre-reg').length;
+  const walkinTurnout = (data.attendance || []).filter(a => a.registrations?.reg_type === 'walk-in').length;
+
   return {
     ...data,
+    student_am_count: amCount,
+    student_pm_count: pmCount,
+    employee_reg_count: empCount,
     event_quotas: (data.event_quotas || []).map(q => ({
       ...q,
       used_capacity: q.registrations[0]?.count || 0
     })),
     stats: {
       total_registrations: data.registrations[0]?.count || 0,
-      total_attended: 0, // Simplified for stability
-      total_pending: data.registrations[0]?.count || 0
+      total_attended: preRegTurnout + walkinTurnout, 
+      pre_reg_turnout: preRegTurnout,
+      walkin_turnout: walkinTurnout,
+      total_pending: Math.max(0, (data.registrations[0]?.count || 0) - (preRegTurnout + walkinTurnout))
     }
   };
 };
@@ -69,7 +173,16 @@ const getEventById = async (eventId, adminId) => {
 const createEvent = async (eventData, adminId, quotas = []) => {
   const { data: event, error: eventError } = await supabase
     .from('events')
-    .insert([{ ...eventData, created_by: adminId }])
+    .insert([{ 
+      name: eventData.name,
+      venue: eventData.venue,
+      event_date: eventData.event_date,
+      total_capacity: eventData.total_capacity,
+      student_am_link: eventData.student_am_link,
+      student_pm_link: eventData.student_pm_link,
+      employee_reg_link: eventData.employee_reg_link,
+      created_by: adminId 
+    }])
     .select()
     .single();
 
@@ -97,7 +210,15 @@ const updateEvent = async (eventId, eventData, adminId, quotas = []) => {
   // 1. Update the event basic info
   const { data: event, error: eventError } = await supabase
     .from('events')
-    .update(eventData)
+    .update({
+      name: eventData.name,
+      venue: eventData.venue,
+      event_date: eventData.event_date,
+      total_capacity: eventData.total_capacity,
+      student_am_link: eventData.student_am_link,
+      student_pm_link: eventData.student_pm_link,
+      employee_reg_link: eventData.employee_reg_link
+    })
     .eq('id', eventId)
     .eq('created_by', adminId)
     .select()
@@ -145,6 +266,61 @@ const updateEvent = async (eventId, eventData, adminId, quotas = []) => {
   return getEventById(eventId, adminId);
 };
 
+const updateRegistrationSettings = async (eventId, adminId, settings) => {
+  // We use upsert for each session type
+  const sessionData = [
+    { 
+      event_id: eventId, 
+      session_type: 'am-reg', 
+      name: 'Student AM Session',
+      registration_link: settings.student_am_link, 
+      is_open: settings.student_am_open 
+    },
+    { 
+      event_id: eventId, 
+      session_type: 'pm-reg', 
+      name: 'Student PM Session',
+      registration_link: settings.student_pm_link, 
+      is_open: settings.student_pm_open 
+    },
+    { 
+      event_id: eventId, 
+      session_type: 'employee-reg', 
+      name: 'Employee Registration',
+      registration_link: settings.employee_reg_link, 
+      is_open: settings.employee_reg_open 
+    },
+    { 
+      event_id: eventId, 
+      session_type: 'walkin-reg', 
+      name: 'Walk-in Registration',
+      registration_link: settings.walkin_link, 
+      is_open: settings.walkin_open 
+    }
+  ];
+
+  const { data, error } = await supabase
+    .from('sessions')
+    .upsert(sessionData, { onConflict: 'event_id,session_type' })
+    .select();
+
+  if (error) throw error;
+  return data;
+};
+
+const updateSessionStatus = async (eventId, sessionType, isOpen) => {
+  const { data, error } = await supabase
+    .from('sessions')
+    .update({ is_open: isOpen })
+    .eq('event_id', eventId)
+    .eq('session_type', sessionType)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
 const deleteEvent = async (eventId, adminId) => {
   const { error } = await supabase
     .from('events')
@@ -156,10 +332,89 @@ const deleteEvent = async (eventId, adminId) => {
   return true;
 };
 
+const recordAttendance = async (eventId, participantId, sessionType) => {
+  let updateField = '';
+  if (sessionType === 'am-reg') updateField = 'am_scanned_at';
+  else if (sessionType === 'pm-reg') updateField = 'pm_scanned_at';
+  else if (sessionType === 'employee-reg') updateField = 'employee_scanned_at';
+  else throw new Error('Invalid session type');
+
+  // Check if session is open
+  const { data: session, error: sessionError } = await supabase
+    .from('sessions')
+    .select('is_open')
+    .eq('event_id', eventId)
+    .eq('session_type', sessionType)
+    .single();
+  
+  if (sessionError) {
+    if (sessionError.code === 'PGRST116') throw new Error('Session not found');
+    throw sessionError;
+  }
+
+  if (!session.is_open) {
+    throw new Error('This session is currently closed for registration');
+  }
+
+  // Record attendance using UPSERT
+  const { data, error } = await supabase
+    .from('attendance')
+    .upsert({ 
+      event_id: eventId, 
+      participant_id: participantId, 
+      [updateField]: new Date().toISOString()
+    }, { 
+      onConflict: 'event_id,participant_id' 
+    })
+    .select()
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+};
+
+const registerWalkin = async (eventId, adminId, walkinData) => {
+  const { fullName, email, quotaId, sessionType } = walkinData;
+
+  // 1. Create the registration record marked as walk-in
+  const { data: registration, error: regError } = await supabase
+    .from('registrations')
+    .insert([{
+      event_id: eventId,
+      full_name: fullName,
+      email: email,
+      quota_id: quotaId,
+      reg_type: 'walk-in',
+      status: 'attended'
+    }])
+    .select()
+    .single();
+
+  if (regError) throw regError;
+
+  // 2. Immediately record attendance
+  try {
+    await recordAttendance(eventId, registration.id, sessionType);
+    return registration;
+  } catch (error) {
+    // If attendance recording fails (e.g. session closed), 
+    // we still have the registration but we should warn the user
+    console.error('Walk-in registered but attendance record failed:', error);
+    return registration;
+  }
+};
+
 module.exports = {
   getAllEvents,
   getEventById,
   createEvent,
   updateEvent,
-  deleteEvent
+  deleteEvent,
+  recordAttendance,
+  registerWalkin,
+  updateRegistrationSettings,
+  updateSessionStatus
 };

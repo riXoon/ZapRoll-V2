@@ -11,6 +11,10 @@ router.get('/', eventController.getAllEvents);
 router.get('/:id', eventController.getEventById);
 router.post('/', eventController.createEvent);
 router.patch('/:id', eventController.updateEvent);
+router.patch('/:id/registration-settings', eventController.updateRegistrationSettings);
+router.patch('/:id/sessions/:type/status', eventController.updateSessionStatus);
 router.delete('/:id', eventController.deleteEvent);
+router.post('/record-attendance', eventController.recordAttendance);
+router.post('/walkin', eventController.registerWalkin);
 
 module.exports = router;

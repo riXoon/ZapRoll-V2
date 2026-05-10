@@ -29,7 +29,7 @@ const getEventById = async (req, res, next) => {
 const createEvent = async (req, res, next) => {
   try {
     const adminId = req.user.id;
-    const { name, venue, event_date, total_capacity, quotas } = req.body;
+    const { name, venue, event_date, total_capacity, quotas, student_am_link, student_pm_link, employee_reg_link } = req.body;
     
     // 1. Check if the user already has an event (Single-event rule)
     const existingEvents = await eventModel.getAllEvents(adminId);
@@ -38,14 +38,14 @@ const createEvent = async (req, res, next) => {
       // If one exists, update it instead!
       const eventId = existingEvents[0].id;
       const updatedEvent = await eventModel.updateEvent(eventId, {
-        name, venue, event_date, total_capacity
+        name, venue, event_date, total_capacity, student_am_link, student_pm_link, employee_reg_link
       }, adminId, quotas);
       return res.status(200).json({ status: 'success', data: updatedEvent });
     }
 
     // 2. Otherwise, create the first one
     const newEvent = await eventModel.createEvent({
-      name, venue, event_date, total_capacity
+      name, venue, event_date, total_capacity, student_am_link, student_pm_link, employee_reg_link
     }, adminId, quotas);
     
     res.status(201).json({ status: 'success', data: newEvent });
@@ -58,10 +58,10 @@ const updateEvent = async (req, res, next) => {
   try {
     const { id } = req.params;
     const adminId = req.user.id;
-    const { name, venue, event_date, total_capacity, quotas } = req.body;
+    const { name, venue, event_date, total_capacity, quotas, student_am_link, student_pm_link, employee_reg_link } = req.body;
     
     const updatedEvent = await eventModel.updateEvent(id, {
-      name, venue, event_date, total_capacity
+      name, venue, event_date, total_capacity, student_am_link, student_pm_link, employee_reg_link
     }, adminId, quotas);
     
     res.status(200).json({ status: 'success', data: updatedEvent });
@@ -82,10 +82,96 @@ const deleteEvent = async (req, res, next) => {
   }
 };
 
+const recordAttendance = async (req, res, next) => {
+  try {
+    const { eventId, participantId, sessionType } = req.body;
+    
+    if (!eventId || !participantId || !sessionType) {
+      return res.status(400).json({ status: 'error', message: 'Missing required fields' });
+    }
+
+    const attendance = await eventModel.recordAttendance(eventId, participantId, sessionType);
+    
+    res.status(200).json({ status: 'success', data: attendance });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const updateRegistrationSettings = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const adminId = req.user.id;
+    const { 
+      student_am_link, 
+      student_pm_link, 
+      employee_reg_link,
+      student_am_open,
+      student_pm_open,
+      employee_reg_open,
+      walkin_link,
+      walkin_open
+    } = req.body;
+    
+    const updatedEvent = await eventModel.updateRegistrationSettings(id, adminId, {
+      student_am_link,
+      student_pm_link,
+      employee_reg_link,
+      student_am_open,
+      student_pm_open,
+      employee_reg_open,
+      walkin_link,
+      walkin_open
+    });
+    
+    res.status(200).json({ status: 'success', data: updatedEvent });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const updateSessionStatus = async (req, res, next) => {
+  try {
+    const { id, type } = req.params;
+    const { is_open } = req.body;
+    
+    const updatedSession = await eventModel.updateSessionStatus(id, type, is_open);
+    res.status(200).json({ status: 'success', data: updatedSession });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const registerWalkin = async (req, res, next) => {
+  try {
+    const { eventId, fullName, email, quotaId, sessionType } = req.body;
+    const adminId = req.user.id;
+    
+    if (!eventId || !fullName || !sessionType) {
+      return res.status(400).json({ status: 'error', message: 'Missing required fields' });
+    }
+
+    const registration = await eventModel.registerWalkin(eventId, adminId, {
+      fullName,
+      email,
+      quotaId,
+      sessionType
+    });
+    
+    res.status(201).json({ status: 'success', data: registration });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   getAllEvents,
   getEventById,
   createEvent,
   updateEvent,
-  deleteEvent
+  deleteEvent,
+  recordAttendance,
+  registerWalkin,
+  updateRegistrationSettings,
+  updateSessionStatus
 };
