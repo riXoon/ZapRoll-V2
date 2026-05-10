@@ -109,8 +109,12 @@ const updateRegistrationSettings = async (req, res, next) => {
       student_am_open,
       student_pm_open,
       employee_reg_open,
-      walkin_link,
-      walkin_open
+      walkin_student_link,
+      walkin_student_open,
+      walkin_employee_link,
+      walkin_employee_open,
+      walkin_guest_link,
+      walkin_guest_open
     } = req.body;
     
     const updatedEvent = await eventModel.updateRegistrationSettings(id, adminId, {
@@ -120,8 +124,12 @@ const updateRegistrationSettings = async (req, res, next) => {
       student_am_open,
       student_pm_open,
       employee_reg_open,
-      walkin_link,
-      walkin_open
+      walkin_student_link,
+      walkin_student_open,
+      walkin_employee_link,
+      walkin_employee_open,
+      walkin_guest_link,
+      walkin_guest_open
     });
     
     res.status(200).json({ status: 'success', data: updatedEvent });
@@ -164,6 +172,40 @@ const registerWalkin = async (req, res, next) => {
   }
 };
 
+const manualRegister = async (req, res, next) => {
+  try {
+    const { eventId, mode, role, sessionType, data } = req.body;
+    const adminId = req.user.id;
+
+    if (!eventId || !mode || !sessionType) {
+      return res.status(400).json({ status: 'error', message: 'Missing required fields' });
+    }
+
+    let result;
+    if (mode === 'pre-registered') {
+      // Logic for Pre-registered
+      result = await eventModel.findAndAttend(eventId, {
+        externalId: data.externalId,
+        fullName: data.fullName
+      }, sessionType, true);
+    } else {
+      // Logic for Walk-in
+      result = await eventModel.registerWalkin(eventId, adminId, {
+        fullName: data.fullName,
+        email: data.email,
+        quotaId: data.quotaId,
+        sessionType: sessionType,
+        externalId: data.externalId,
+        metadata: data.metadata
+      });
+    }
+
+    res.status(200).json({ status: 'success', data: result });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   getAllEvents,
   getEventById,
@@ -172,6 +214,7 @@ module.exports = {
   deleteEvent,
   recordAttendance,
   registerWalkin,
+  manualRegister,
   updateRegistrationSettings,
   updateSessionStatus
 };

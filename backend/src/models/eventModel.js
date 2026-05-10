@@ -267,37 +267,37 @@ const updateEvent = async (eventId, eventData, adminId, quotas = []) => {
 };
 
 const updateRegistrationSettings = async (eventId, adminId, settings) => {
-  // We use upsert for each session type
-  const sessionData = [
-    { 
-      event_id: eventId, 
-      session_type: 'am-reg', 
-      name: 'Student AM Session',
-      registration_link: settings.student_am_link, 
-      is_open: settings.student_am_open 
-    },
-    { 
-      event_id: eventId, 
-      session_type: 'pm-reg', 
-      name: 'Student PM Session',
-      registration_link: settings.student_pm_link, 
-      is_open: settings.student_pm_open 
-    },
-    { 
-      event_id: eventId, 
-      session_type: 'employee-reg', 
-      name: 'Employee Registration',
-      registration_link: settings.employee_reg_link, 
-      is_open: settings.employee_reg_open 
-    },
-    { 
-      event_id: eventId, 
-      session_type: 'walkin-reg', 
-      name: 'Walk-in Registration',
-      registration_link: settings.walkin_link, 
-      is_open: settings.walkin_open 
-    }
+  // 1. Fetch existing sessions to avoid overwriting with NULL
+  const { data: existing, error: fetchError } = await supabase
+    .from('sessions')
+    .select('*')
+    .eq('event_id', eventId);
+    
+  if (fetchError) throw fetchError;
+
+  const sessionMap = {};
+  (existing || []).forEach(s => sessionMap[s.session_type] = s);
+
+  const sessionTypes = [
+    { type: 'am-reg', link: 'student_am_link', open: 'student_am_open', name: 'Student AM Session' },
+    { type: 'pm-reg', link: 'student_pm_link', open: 'student_pm_open', name: 'Student PM Session' },
+    { type: 'employee-reg', link: 'employee_reg_link', open: 'employee_reg_open', name: 'Employee Registration' },
+    { type: 'walkin-student', link: 'walkin_student_link', open: 'walkin_student_open', name: 'Walk-in Student' },
+    { type: 'walkin-employee', link: 'walkin_employee_link', open: 'walkin_employee_open', name: 'Walk-in Employee' },
+    { type: 'walkin-guest', link: 'walkin_guest_link', open: 'walkin_guest_open', name: 'Walk-in Guest' },
   ];
+
+  const sessionData = sessionTypes.map(s => {
+    const current = sessionMap[s.type] || {};
+    return {
+      event_id: eventId,
+      session_type: s.type,
+      name: s.name,
+      // Only update if the field was actually provided in the request (is not undefined)
+      registration_link: settings[s.link] !== undefined ? settings[s.link] : (current.registration_link || ''),
+      is_open: settings[s.open] !== undefined ? settings[s.open] : (current.is_open || false)
+    };
+  });
 
   const { data, error } = await supabase
     .from('sessions')
@@ -332,12 +332,14 @@ const deleteEvent = async (eventId, adminId) => {
   return true;
 };
 
-const recordAttendance = async (eventId, participantId, sessionType) => {
+const recordAttendance = async (eventId, participantId, sessionType, force = false) => {
   let updateField = '';
-  if (sessionType === 'am-reg') updateField = 'am_scanned_at';
+  if (sessionType === 'am-reg' || sessionType === 'walkin-student' || sessionType === 'walkin-guest') updateField = 'am_scanned_at';
   else if (sessionType === 'pm-reg') updateField = 'pm_scanned_at';
-  else if (sessionType === 'employee-reg') updateField = 'employee_scanned_at';
+  else if (sessionType === 'employee-reg' || sessionType === 'walkin-employee') updateField = 'employee_scanned_at';
   else throw new Error('Invalid session type');
+
+  if (!force) {
 
   // Check if session is open
   const { data: session, error: sessionError } = await supabase
@@ -352,8 +354,9 @@ const recordAttendance = async (eventId, participantId, sessionType) => {
     throw sessionError;
   }
 
-  if (!session.is_open) {
-    throw new Error('This session is currently closed for registration');
+    if (!session.is_open) {
+      throw new Error('This session is currently closed for registration');
+    }
   }
 
   // Record attendance using UPSERT
@@ -362,6 +365,7 @@ const recordAttendance = async (eventId, participantId, sessionType) => {
     .upsert({ 
       event_id: eventId, 
       participant_id: participantId, 
+      registration_id: participantId, // This is required and non-nullable
       [updateField]: new Date().toISOString()
     }, { 
       onConflict: 'event_id,participant_id' 
@@ -375,29 +379,68 @@ const recordAttendance = async (eventId, participantId, sessionType) => {
 
   return data;
 };
+const findAndAttend = async (eventId, searchCriteria, sessionType, force = false) => {
+  const { externalId, fullName } = searchCriteria;
+  
+  // 1. Find the registration
+  let query = supabase
+    .from('registrations')
+    .select('id, full_name, external_id')
+    .eq('event_id', eventId);
+    
+  if (externalId) {
+    query = query.eq('external_id', externalId);
+  } else if (fullName) {
+    query = query.ilike('full_name', `%${fullName}%`);
+  } else {
+    throw new Error('No search criteria provided');
+  }
+
+  const { data: registrations, error: findError } = await query;
+  
+  if (findError) throw findError;
+  if (!registrations || registrations.length === 0) {
+    throw new Error('Participant not found in pre-registrations');
+  }
+
+  // If multiple found and searching by name, we might need to be more specific
+  // but for now we'll take the first one.
+  const registration = registrations[0];
+
+  // 2. Record attendance
+  await recordAttendance(eventId, registration.id, sessionType, force);
+  
+  return registration;
+};
 
 const registerWalkin = async (eventId, adminId, walkinData) => {
-  const { fullName, email, quotaId, sessionType } = walkinData;
+  const { fullName, email, quotaId, sessionType, externalId, metadata } = walkinData;
 
-  // 1. Create the registration record marked as walk-in
+  // 1. Create or Update the registration record (Upsert)
+  const insertData = {
+    event_id: eventId,
+    full_name: fullName,
+    email: email,
+    quota_id: quotaId,
+    external_id: externalId,
+    metadata: metadata || {},
+    reg_type: 'walk-in',
+    status: 'registered'
+  };
+
   const { data: registration, error: regError } = await supabase
     .from('registrations')
-    .insert([{
-      event_id: eventId,
-      full_name: fullName,
-      email: email,
-      quota_id: quotaId,
-      reg_type: 'walk-in',
-      status: 'attended'
-    }])
+    .upsert(insertData, { 
+      onConflict: externalId ? 'event_id,external_id' : 'id' 
+    })
     .select()
     .single();
 
   if (regError) throw regError;
 
-  // 2. Immediately record attendance
+  // 2. Immediately record attendance with force=true for manual entry
   try {
-    await recordAttendance(eventId, registration.id, sessionType);
+    await recordAttendance(eventId, registration.id, sessionType, true);
     return registration;
   } catch (error) {
     // If attendance recording fails (e.g. session closed), 
@@ -415,6 +458,7 @@ module.exports = {
   deleteEvent,
   recordAttendance,
   registerWalkin,
+  findAndAttend,
   updateRegistrationSettings,
   updateSessionStatus
 };

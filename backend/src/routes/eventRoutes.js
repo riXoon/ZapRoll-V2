@@ -16,5 +16,6 @@ router.patch('/:id/sessions/:type/status', eventController.updateSessionStatus);
 router.delete('/:id', eventController.deleteEvent);
 router.post('/record-attendance', eventController.recordAttendance);
 router.post('/walkin', eventController.registerWalkin);
+router.post('/manual-register', eventController.manualRegister);
 
 module.exports = router;
