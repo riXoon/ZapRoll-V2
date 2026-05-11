@@ -311,9 +311,15 @@ const updateRegistrationSettings = async (eventId, adminId, settings) => {
 const updateSessionStatus = async (eventId, sessionType, isOpen) => {
   const { data, error } = await supabase
     .from('sessions')
-    .update({ is_open: isOpen })
-    .eq('event_id', eventId)
-    .eq('session_type', sessionType)
+    .upsert({ 
+      event_id: eventId, 
+      session_type: sessionType, 
+      is_open: isOpen,
+      // Default name if it's new
+      name: sessionType.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+    }, { 
+      onConflict: 'event_id,session_type' 
+    })
     .select()
     .single();
 
