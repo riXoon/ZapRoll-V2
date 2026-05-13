@@ -178,9 +178,9 @@ const createEvent = async (eventData, adminId, quotas = []) => {
       venue: eventData.venue,
       event_date: eventData.event_date,
       total_capacity: eventData.total_capacity,
-      student_am_link: eventData.student_am_link,
-      student_pm_link: eventData.student_pm_link,
-      employee_reg_link: eventData.employee_reg_link,
+      pre_reg_open: eventData.pre_reg_open !== undefined ? eventData.pre_reg_open : true,
+      pre_reg_deadline: eventData.pre_reg_deadline,
+      is_locked: eventData.is_locked !== undefined ? eventData.is_locked : false,
       created_by: adminId 
     }])
     .select()
@@ -208,17 +208,19 @@ const createEvent = async (eventData, adminId, quotas = []) => {
 
 const updateEvent = async (eventId, eventData, adminId, quotas = []) => {
   // 1. Update the event basic info
-  const { data: event, error: eventError } = await supabase
-    .from('events')
-    .update({
-      name: eventData.name,
-      venue: eventData.venue,
-      event_date: eventData.event_date,
-      total_capacity: eventData.total_capacity,
-      student_am_link: eventData.student_am_link,
-      student_pm_link: eventData.student_pm_link,
-      employee_reg_link: eventData.employee_reg_link
-    })
+    const updateData = {};
+    if (eventData.name !== undefined) updateData.name = eventData.name;
+    if (eventData.venue !== undefined) updateData.venue = eventData.venue;
+    if (eventData.event_date !== undefined) updateData.event_date = eventData.event_date;
+    if (eventData.total_capacity !== undefined) updateData.total_capacity = eventData.total_capacity;
+    if (eventData.pre_reg_open !== undefined) updateData.pre_reg_open = eventData.pre_reg_open;
+    if (eventData.pre_reg_deadline !== undefined) updateData.pre_reg_deadline = eventData.pre_reg_deadline;
+    if (eventData.is_locked !== undefined) updateData.is_locked = eventData.is_locked;
+    if (eventData.evaluation_base_url !== undefined) updateData.evaluation_base_url = eventData.evaluation_base_url;
+
+    const { data: event, error: eventError } = await supabase
+      .from('events')
+      .update(updateData)
     .eq('id', eventId)
     .eq('created_by', adminId)
     .select()
@@ -284,7 +286,7 @@ const updateRegistrationSettings = async (eventId, adminId, settings) => {
     { type: 'employee-reg', link: 'employee_reg_link', open: 'employee_reg_open', name: 'Employee Registration' },
     { type: 'walkin-student', link: 'walkin_student_link', open: 'walkin_student_open', name: 'Walk-in Student' },
     { type: 'walkin-employee', link: 'walkin_employee_link', open: 'walkin_employee_open', name: 'Walk-in Employee' },
-    { type: 'walkin-guest', link: 'walkin_guest_link', open: 'walkin_guest_open', name: 'Walk-in Guest' },
+    { type: 'walkin-guest', link: 'guest_reg_link', open: 'guest_reg_open', name: 'Guest Registration' },
   ];
 
   const sessionData = sessionTypes.map(s => {
@@ -456,6 +458,65 @@ const registerWalkin = async (eventId, adminId, walkinData) => {
   }
 };
 
+const getEvaluationTemplate = async (eventId) => {
+  const { data, error } = await supabase
+    .from('evaluation_templates')
+    .select('*')
+    .eq('event_id', eventId)
+    .single();
+
+  if (error && error.code !== 'PGRST116') throw error;
+  return data;
+};
+
+const saveEvaluationTemplate = async (eventId, templateData) => {
+  const { title, questions, is_active } = templateData;
+  
+  const { data, error } = await supabase
+    .from('evaluation_templates')
+    .upsert({
+      event_id: eventId,
+      title: title || 'Evaluation Form',
+      questions: questions,
+      is_active: is_active !== undefined ? is_active : true
+    }, {
+      onConflict: 'event_id'
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
+const saveEvaluationResponse = async (eventId, responseData) => {
+  const { registration_id, session_id, responses } = responseData;
+  
+  // 1. Get the template_id for this event
+  const { data: template, error: tError } = await supabase
+    .from('evaluation_templates')
+    .select('id')
+    .eq('event_id', eventId)
+    .single();
+
+  if (tError) throw new Error('Evaluation template not found for this event');
+
+  // 2. Insert the response
+  const { data, error } = await supabase
+    .from('evaluation_responses')
+    .insert({
+      template_id: template.id,
+      registration_id: registration_id,
+      session_id: session_id,
+      responses: responses
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
 module.exports = {
   getAllEvents,
   getEventById,
@@ -466,5 +527,8 @@ module.exports = {
   registerWalkin,
   findAndAttend,
   updateRegistrationSettings,
-  updateSessionStatus
+  updateSessionStatus,
+  getEvaluationTemplate,
+  saveEvaluationTemplate,
+  saveEvaluationResponse
 };

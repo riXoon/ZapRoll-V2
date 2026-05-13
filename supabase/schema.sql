@@ -56,7 +56,10 @@ create table if not exists public.events (
     event_date date not null,
     total_capacity integer check (total_capacity > 0),
     is_locked boolean default false,
+    evaluation_base_url text,
     registration_url text,
+    pre_reg_open boolean default true,
+    pre_reg_deadline timestamptz,
     created_at timestamptz default now()
 );
 
@@ -134,7 +137,7 @@ create table if not exists public.attendance (
 -- Evaluation Templates
 create table if not exists public.evaluation_templates (
     id uuid primary key default gen_random_uuid(),
-    event_id uuid references public.events(id) on delete cascade not null,
+    event_id uuid references public.events(id) on delete cascade not null unique,
     title text not null,
     questions jsonb not null, 
     is_active boolean default false,

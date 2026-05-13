@@ -29,7 +29,10 @@ const getEventById = async (req, res, next) => {
 const createEvent = async (req, res, next) => {
   try {
     const adminId = req.user.id;
-    const { name, venue, event_date, total_capacity, quotas, student_am_link, student_pm_link, employee_reg_link } = req.body;
+    const { 
+      name, venue, event_date, total_capacity, quotas, 
+      pre_reg_open, pre_reg_deadline, is_locked
+    } = req.body;
     
     // 1. Check if the user already has an event (Single-event rule)
     const existingEvents = await eventModel.getAllEvents(adminId);
@@ -38,14 +41,16 @@ const createEvent = async (req, res, next) => {
       // If one exists, update it instead!
       const eventId = existingEvents[0].id;
       const updatedEvent = await eventModel.updateEvent(eventId, {
-        name, venue, event_date, total_capacity, student_am_link, student_pm_link, employee_reg_link
+        name, venue, event_date, total_capacity, 
+        pre_reg_open, pre_reg_deadline, is_locked
       }, adminId, quotas);
       return res.status(200).json({ status: 'success', data: updatedEvent });
     }
 
     // 2. Otherwise, create the first one
     const newEvent = await eventModel.createEvent({
-      name, venue, event_date, total_capacity, student_am_link, student_pm_link, employee_reg_link
+      name, venue, event_date, total_capacity, 
+      pre_reg_open, pre_reg_deadline, is_locked
     }, adminId, quotas);
     
     res.status(201).json({ status: 'success', data: newEvent });
@@ -58,10 +63,14 @@ const updateEvent = async (req, res, next) => {
   try {
     const { id } = req.params;
     const adminId = req.user.id;
-    const { name, venue, event_date, total_capacity, quotas, student_am_link, student_pm_link, employee_reg_link } = req.body;
+    const { 
+      name, venue, event_date, total_capacity, quotas, 
+      pre_reg_open, pre_reg_deadline, is_locked
+    } = req.body;
     
     const updatedEvent = await eventModel.updateEvent(id, {
-      name, venue, event_date, total_capacity, student_am_link, student_pm_link, employee_reg_link
+      name, venue, event_date, total_capacity, 
+      pre_reg_open, pre_reg_deadline, is_locked
     }, adminId, quotas);
     
     res.status(200).json({ status: 'success', data: updatedEvent });
@@ -206,6 +215,50 @@ const manualRegister = async (req, res, next) => {
   }
 };
 
+const getEvaluationTemplate = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const template = await eventModel.getEvaluationTemplate(id);
+    res.status(200).json({ status: 'success', data: template });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const saveEvaluationTemplate = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { title, questions, is_active } = req.body;
+    
+    const template = await eventModel.saveEvaluationTemplate(id, {
+      title,
+      questions,
+      is_active
+    });
+    
+    res.status(200).json({ status: 'success', data: template });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const saveEvaluationResponse = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { registration_id, session_id, responses } = req.body;
+    
+    const response = await eventModel.saveEvaluationResponse(id, {
+      registration_id,
+      session_id,
+      responses
+    });
+    
+    res.status(201).json({ status: 'success', data: response });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   getAllEvents,
   getEventById,
@@ -216,5 +269,8 @@ module.exports = {
   registerWalkin,
   manualRegister,
   updateRegistrationSettings,
-  updateSessionStatus
+  updateSessionStatus,
+  getEvaluationTemplate,
+  saveEvaluationTemplate,
+  saveEvaluationResponse
 };

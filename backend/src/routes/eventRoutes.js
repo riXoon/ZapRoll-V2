@@ -4,7 +4,11 @@ const authMiddleware = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
-// All event routes are protected by authMiddleware
+// Public Evaluation Routes (Accessed by website participants)
+router.get('/:id/evaluation-template', eventController.getEvaluationTemplate);
+router.post('/:id/evaluation-responses', eventController.saveEvaluationResponse);
+
+// Protected Routes
 router.use(authMiddleware);
 
 router.get('/', eventController.getAllEvents);
@@ -17,5 +21,8 @@ router.delete('/:id', eventController.deleteEvent);
 router.post('/record-attendance', eventController.recordAttendance);
 router.post('/walkin', eventController.registerWalkin);
 router.post('/manual-register', eventController.manualRegister);
+
+// Evaluation Design Routes (Protected)
+router.post('/:id/evaluation-template', eventController.saveEvaluationTemplate);
 
 module.exports = router;
