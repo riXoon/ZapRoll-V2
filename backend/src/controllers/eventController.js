@@ -31,7 +31,7 @@ const createEvent = async (req, res, next) => {
     const adminId = req.user.id;
     const { 
       name, venue, event_date, total_capacity, quotas, 
-      pre_reg_open, pre_reg_deadline, is_locked
+      pre_reg_open, pre_reg_deadline, is_locked, evaluation_base_url
     } = req.body;
     
     // 1. Check if the user already has an event (Single-event rule)
@@ -42,7 +42,7 @@ const createEvent = async (req, res, next) => {
       const eventId = existingEvents[0].id;
       const updatedEvent = await eventModel.updateEvent(eventId, {
         name, venue, event_date, total_capacity, 
-        pre_reg_open, pre_reg_deadline, is_locked
+        pre_reg_open, pre_reg_deadline, is_locked, evaluation_base_url
       }, adminId, quotas);
       return res.status(200).json({ status: 'success', data: updatedEvent });
     }
@@ -50,7 +50,7 @@ const createEvent = async (req, res, next) => {
     // 2. Otherwise, create the first one
     const newEvent = await eventModel.createEvent({
       name, venue, event_date, total_capacity, 
-      pre_reg_open, pre_reg_deadline, is_locked
+      pre_reg_open, pre_reg_deadline, is_locked, evaluation_base_url
     }, adminId, quotas);
     
     res.status(201).json({ status: 'success', data: newEvent });
@@ -65,12 +65,12 @@ const updateEvent = async (req, res, next) => {
     const adminId = req.user.id;
     const { 
       name, venue, event_date, total_capacity, quotas, 
-      pre_reg_open, pre_reg_deadline, is_locked
+      pre_reg_open, pre_reg_deadline, is_locked, evaluation_base_url
     } = req.body;
     
     const updatedEvent = await eventModel.updateEvent(id, {
       name, venue, event_date, total_capacity, 
-      pre_reg_open, pre_reg_deadline, is_locked
+      pre_reg_open, pre_reg_deadline, is_locked, evaluation_base_url
     }, adminId, quotas);
     
     res.status(200).json({ status: 'success', data: updatedEvent });
@@ -123,7 +123,9 @@ const updateRegistrationSettings = async (req, res, next) => {
       walkin_employee_link,
       walkin_employee_open,
       walkin_guest_link,
-      walkin_guest_open
+      walkin_guest_open,
+      poster_clearance_link,
+      poster_clearance_open
     } = req.body;
     
     const updatedEvent = await eventModel.updateRegistrationSettings(id, adminId, {
@@ -138,7 +140,9 @@ const updateRegistrationSettings = async (req, res, next) => {
       walkin_employee_link,
       walkin_employee_open,
       walkin_guest_link,
-      walkin_guest_open
+      walkin_guest_open,
+      poster_clearance_link,
+      poster_clearance_open
     });
     
     res.status(200).json({ status: 'success', data: updatedEvent });

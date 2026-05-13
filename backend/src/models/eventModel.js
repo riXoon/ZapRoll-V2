@@ -14,7 +14,8 @@ const getAllEvents = async (adminId) => {
         event_quotas(*, registrations(count)),
         registrations(count),
         attendance(*, registrations!participant_id(quota_id, reg_type)),
-        sessions(*)
+        sessions(*),
+        post_event_settings(*)
       `)
       .eq('created_by', adminId)
       .order('event_date', { ascending: false });
@@ -27,7 +28,8 @@ const getAllEvents = async (adminId) => {
           .select(`
             *,
             event_quotas(*, registrations(count)),
-            registrations(count)
+            registrations(count),
+            post_event_settings(*)
           `)
           .eq('created_by', adminId)
           .order('event_date', { ascending: false });
@@ -102,6 +104,7 @@ const getEventById = async (eventId, adminId) => {
       event_quotas(*, registrations(count)),
       registrations(count),
       sessions(*),
+      post_event_settings(*),
       attendance(*, registrations!participant_id(quota_id, reg_type))
     `)
     .eq('id', eventId)
@@ -118,7 +121,8 @@ const getEventById = async (eventId, adminId) => {
           *,
           event_quotas(*, registrations(count)),
           registrations(count),
-          sessions(*)
+          sessions(*),
+          post_event_settings(*)
         `)
         .eq('id', eventId)
         .eq('created_by', adminId)
@@ -188,7 +192,7 @@ const createEvent = async (eventData, adminId, quotas = []) => {
 
   if (eventError) throw eventError;
 
-  if (quotas.length > 0) {
+  if (quotas && quotas.length > 0) {
     const quotaData = quotas.map(q => ({
       name: q.name,
       capacity: q.capacity,
@@ -228,7 +232,7 @@ const updateEvent = async (eventId, eventData, adminId, quotas = []) => {
 
   if (eventError) throw eventError;
 
-  if (quotas.length > 0) {
+  if (quotas && quotas.length > 0) {
     // 1. Identify which quotas to keep/update (Only real UUIDs)
     const currentQuotaIds = quotas
       .filter(q => q.id && q.id.length > 20)
@@ -269,57 +273,71 @@ const updateEvent = async (eventId, eventData, adminId, quotas = []) => {
 };
 
 const updateRegistrationSettings = async (eventId, adminId, settings) => {
-  // 1. Fetch existing sessions to avoid overwriting with NULL
-  const { data: existing, error: fetchError } = await supabase
-    .from('sessions')
-    .select('*')
-    .eq('event_id', eventId);
-    
-  if (fetchError) throw fetchError;
-
-  const sessionMap = {};
-  (existing || []).forEach(s => sessionMap[s.session_type] = s);
-
+  // 1. Handle Regular Sessions (Event Day)
   const sessionTypes = [
     { type: 'am-reg', link: 'student_am_link', open: 'student_am_open', name: 'Student AM Session' },
     { type: 'pm-reg', link: 'student_pm_link', open: 'student_pm_open', name: 'Student PM Session' },
     { type: 'employee-reg', link: 'employee_reg_link', open: 'employee_reg_open', name: 'Employee Registration' },
     { type: 'walkin-student', link: 'walkin_student_link', open: 'walkin_student_open', name: 'Walk-in Student' },
     { type: 'walkin-employee', link: 'walkin_employee_link', open: 'walkin_employee_open', name: 'Walk-in Employee' },
-    { type: 'walkin-guest', link: 'guest_reg_link', open: 'guest_reg_open', name: 'Guest Registration' },
+    { type: 'walkin-guest', link: 'guest_reg_link', open: 'guest_reg_open', name: 'Guest Registration' }
   ];
 
-  const sessionData = sessionTypes.map(s => {
-    const current = sessionMap[s.type] || {};
-    return {
-      event_id: eventId,
-      session_type: s.type,
-      name: s.name,
-      // Only update if the field was actually provided in the request (is not undefined)
-      registration_link: settings[s.link] !== undefined ? settings[s.link] : (current.registration_link || ''),
-      is_open: settings[s.open] !== undefined ? settings[s.open] : (current.is_open || false)
-    };
-  });
+  const sessionData = sessionTypes.map(s => ({
+    event_id: eventId,
+    session_type: s.type,
+    name: s.name,
+    registration_link: settings[s.link] || '',
+    is_open: settings[s.open] || false
+  }));
 
-  const { data, error } = await supabase
+  const { error: sessionError } = await supabase
     .from('sessions')
-    .upsert(sessionData, { onConflict: 'event_id,session_type' })
-    .select();
+    .upsert(sessionData, { onConflict: 'event_id,session_type' });
 
-  if (error) throw error;
-  return data;
+  if (sessionError) throw sessionError;
+
+  // 2. Handle Post-Event Settings (New Table)
+  const postEventTypes = [
+    { type: 'am-eval', link: 'am_eval_link', open: 'is_am_eval_open' },
+    { type: 'pm-eval', link: 'pm_eval_link', open: 'is_pm_eval_open' },
+    { type: 'poster-clearance', link: 'poster_clearance_link', open: 'poster_clearance_open' }
+  ];
+
+  const postEventData = postEventTypes.map(p => ({
+    event_id: eventId,
+    session_type: p.type,
+    registration_link: settings[p.link] || '',
+    is_open: settings[p.open] || false
+  }));
+
+  const { error: postEventError } = await supabase
+    .from('post_event_settings')
+    .upsert(postEventData, { onConflict: 'event_id,session_type' });
+
+  if (postEventError) throw postEventError;
+
+  return { status: 'success' };
 };
 
 const updateSessionStatus = async (eventId, sessionType, isOpen) => {
+  const table = (sessionType === 'am-eval' || sessionType === 'pm-eval' || sessionType === 'poster-clearance')
+    ? 'post_event_settings'
+    : 'sessions';
+
+  const updateData = { 
+    event_id: eventId, 
+    session_type: sessionType, 
+    is_open: isOpen
+  };
+
+  if (table === 'sessions') {
+    updateData.name = sessionType.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+  }
+
   const { data, error } = await supabase
-    .from('sessions')
-    .upsert({ 
-      event_id: eventId, 
-      session_type: sessionType, 
-      is_open: isOpen,
-      // Default name if it's new
-      name: sessionType.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
-    }, { 
+    .from(table)
+    .upsert(updateData, { 
       onConflict: 'event_id,session_type' 
     })
     .select()
@@ -342,8 +360,8 @@ const deleteEvent = async (eventId, adminId) => {
 
 const recordAttendance = async (eventId, participantId, sessionType, force = false) => {
   let updateField = '';
-  if (sessionType === 'am-reg' || sessionType === 'walkin-student' || sessionType === 'walkin-guest') updateField = 'am_scanned_at';
-  else if (sessionType === 'pm-reg') updateField = 'pm_scanned_at';
+  if (sessionType === 'am-reg' || sessionType === 'walkin-student' || sessionType === 'walkin-guest' || sessionType === 'am-eval') updateField = 'am_scanned_at';
+  else if (sessionType === 'pm-reg' || sessionType === 'poster-clearance' || sessionType === 'pm-eval') updateField = 'pm_scanned_at';
   else if (sessionType === 'employee-reg' || sessionType === 'walkin-employee') updateField = 'employee_scanned_at';
   else throw new Error('Invalid session type');
 
