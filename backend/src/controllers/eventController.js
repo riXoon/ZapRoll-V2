@@ -115,15 +115,21 @@ const updateRegistrationSettings = async (req, res, next) => {
       student_am_link, 
       student_pm_link, 
       employee_reg_link,
+      guest_reg_link,
       student_am_open,
       student_pm_open,
       employee_reg_open,
+      guest_reg_open,
       walkin_student_link,
       walkin_student_open,
       walkin_employee_link,
       walkin_employee_open,
       walkin_guest_link,
       walkin_guest_open,
+      am_eval_link,
+      pm_eval_link,
+      is_am_eval_open,
+      is_pm_eval_open,
       poster_clearance_link,
       poster_clearance_open
     } = req.body;
@@ -132,15 +138,21 @@ const updateRegistrationSettings = async (req, res, next) => {
       student_am_link,
       student_pm_link,
       employee_reg_link,
+      guest_reg_link: guest_reg_link !== undefined ? guest_reg_link : walkin_guest_link,
       student_am_open,
       student_pm_open,
       employee_reg_open,
+      guest_reg_open: guest_reg_open !== undefined ? guest_reg_open : walkin_guest_open,
       walkin_student_link,
       walkin_student_open,
       walkin_employee_link,
       walkin_employee_open,
-      walkin_guest_link,
-      walkin_guest_open,
+      walkin_guest_link: walkin_guest_link !== undefined ? walkin_guest_link : guest_reg_link,
+      walkin_guest_open: walkin_guest_open !== undefined ? walkin_guest_open : guest_reg_open,
+      am_eval_link,
+      pm_eval_link,
+      is_am_eval_open,
+      is_pm_eval_open,
       poster_clearance_link,
       poster_clearance_open
     });
@@ -263,6 +275,24 @@ const saveEvaluationResponse = async (req, res, next) => {
   }
 };
 
+const getEvaluationResponses = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const adminId = req.user.id;
+    
+    // Check if event exists and admin owns it
+    const event = await eventModel.getEventById(id, adminId);
+    if (!event) {
+      return res.status(404).json({ status: 'error', message: 'Event not found' });
+    }
+
+    const responses = await eventModel.getEvaluationResponses(id);
+    res.status(200).json({ status: 'success', data: responses });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   getAllEvents,
   getEventById,
@@ -276,5 +306,6 @@ module.exports = {
   updateSessionStatus,
   getEvaluationTemplate,
   saveEvaluationTemplate,
-  saveEvaluationResponse
+  saveEvaluationResponse,
+  getEvaluationResponses
 };

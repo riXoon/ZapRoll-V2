@@ -23,6 +23,7 @@ router.post('/walkin', eventController.registerWalkin);
 router.post('/manual-register', eventController.manualRegister);
 
 // Evaluation Design Routes (Protected)
+router.get('/:id/evaluation-responses', eventController.getEvaluationResponses);
 router.post('/:id/evaluation-template', eventController.saveEvaluationTemplate);
 
 module.exports = router;

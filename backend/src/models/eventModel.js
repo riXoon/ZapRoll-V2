@@ -535,6 +535,32 @@ const saveEvaluationResponse = async (eventId, responseData) => {
   return data;
 };
 
+const getEvaluationResponses = async (eventId) => {
+  // 1. Get the template_id for this event
+  const { data: template, error: tError } = await supabase
+    .from('evaluation_templates')
+    .select('id')
+    .eq('event_id', eventId)
+    .single();
+
+  if (tError) {
+    if (tError.code === 'PGRST116') return [];
+    throw tError;
+  }
+
+  // 2. Fetch responses joined with registration data
+  const { data, error } = await supabase
+    .from('evaluation_responses')
+    .select(`
+      *,
+      registrations(full_name, email, external_id)
+    `)
+    .eq('template_id', template.id);
+
+  if (error) throw error;
+  return data;
+};
+
 module.exports = {
   getAllEvents,
   getEventById,
@@ -548,5 +574,6 @@ module.exports = {
   updateSessionStatus,
   getEvaluationTemplate,
   saveEvaluationTemplate,
-  saveEvaluationResponse
+  saveEvaluationResponse,
+  getEvaluationResponses
 };
