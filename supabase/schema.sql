@@ -216,6 +216,7 @@ create index if not exists idx_eval_responses_jsonb on public.evaluation_respons
 -- 6. REPORTING VIEWS (Always Replaced)
 -- ==========================================
 
+drop view if exists public.v_event_stats;
 create or replace view public.v_event_stats 
 with (security_invoker = true)
 as
@@ -223,14 +224,20 @@ select
     e.id as event_id,
     e.name as event_name,
     (select count(*) from public.registrations where event_id = e.id) as total_registered,
-    (select count(*) from public.attendance a 
-     join public.registrations r on a.registration_id = r.id 
-     where r.event_id = e.id) as total_attendance_scans,
+    (select coalesce(sum(
+        greatest(
+            (case when am_scanned_at is not null then 1 else 0 end) +
+            (case when pm_scanned_at is not null then 1 else 0 end) +
+            (case when employee_scanned_at is not null then 1 else 0 end),
+            (case when session_id is not null then 1 else 0 end)
+        )
+     ), 0) from public.attendance where event_id = e.id) as total_attendance_scans,
     (select count(*) from public.evaluation_responses er 
      join public.registrations r on er.registration_id = r.id 
      where r.event_id = e.id) as total_evaluations
 from public.events e;
 
+drop view if exists public.v_certificate_eligibility;
 create or replace view public.v_certificate_eligibility 
 with (security_invoker = true)
 as
@@ -239,12 +246,22 @@ select
     r.full_name,
     r.email,
     r.external_id,
-    r.event_id,
-    count(distinct a.session_id) as sessions_attended,
-    exists(select 1 from public.evaluation_responses where registration_id = r.id) as evaluation_submitted
+    r.metadata,
+    -- Timestamps
+    a.am_scanned_at,
+    a.pm_scanned_at,
+    er.am_eval_submitted_at,
+    er.pm_eval_submitted_at,
+    -- Combined Eligibility
+    (
+        a.am_scanned_at is not null and 
+        a.pm_scanned_at is not null and
+        er.am_eval_submitted_at is not null and
+        er.pm_eval_submitted_at is not null
+    ) as is_eligible
 from public.registrations r
 left join public.attendance a on a.registration_id = r.id
-group by r.id, r.full_name, r.email, r.external_id, r.event_id;
+left join public.evaluation_responses er on er.registration_id = r.id;
 
 -- ==========================================
 -- 7. SECURITY (Policies Recreated Safely)

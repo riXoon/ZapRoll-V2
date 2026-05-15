@@ -297,6 +297,16 @@ const getEvaluationResponses = async (req, res, next) => {
   }
 };
 
+const getCertificateWhitelist = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const whitelist = await eventModel.getCertificateWhitelist(id);
+    res.status(200).json({ status: 'success', data: whitelist });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   getAllEvents,
   getEventById,
@@ -311,5 +321,6 @@ module.exports = {
   getEvaluationTemplate,
   saveEvaluationTemplate,
   saveEvaluationResponse,
-  getEvaluationResponses
+  getEvaluationResponses,
+  getCertificateWhitelist
 };

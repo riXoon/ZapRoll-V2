@@ -590,6 +590,17 @@ const getEvaluationResponses = async (eventId, sessionType = 'am-eval') => {
   return data;
 };
 
+const getCertificateWhitelist = async (eventId) => {
+  const { data, error } = await supabase
+    .from('v_certificate_eligibility')
+    .select('*')
+    .eq('event_id', eventId)
+    .eq('is_eligible', true);
+
+  if (error) throw error;
+  return data;
+};
+
 module.exports = {
   getAllEvents,
   getEventById,
@@ -604,5 +615,6 @@ module.exports = {
   getEvaluationTemplate,
   saveEvaluationTemplate,
   saveEvaluationResponse,
-  getEvaluationResponses
+  getEvaluationResponses,
+  getCertificateWhitelist
 };
