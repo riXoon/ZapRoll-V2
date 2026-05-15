@@ -234,7 +234,8 @@ const manualRegister = async (req, res, next) => {
 const getEvaluationTemplate = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const template = await eventModel.getEvaluationTemplate(id);
+    const { sessionType } = req.query;
+    const template = await eventModel.getEvaluationTemplate(id, sessionType);
     res.status(200).json({ status: 'success', data: template });
   } catch (err) {
     next(err);
@@ -244,12 +245,13 @@ const getEvaluationTemplate = async (req, res, next) => {
 const saveEvaluationTemplate = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { title, questions, is_active } = req.body;
+    const { title, questions, is_active, session_type } = req.body;
     
     const template = await eventModel.saveEvaluationTemplate(id, {
       title,
       questions,
-      is_active
+      is_active,
+      session_type
     });
     
     res.status(200).json({ status: 'success', data: template });
@@ -261,12 +263,13 @@ const saveEvaluationTemplate = async (req, res, next) => {
 const saveEvaluationResponse = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { registration_id, session_id, responses } = req.body;
+    const { registration_id, session_id, responses, session_type } = req.body;
     
     const response = await eventModel.saveEvaluationResponse(id, {
       registration_id,
       session_id,
-      responses
+      responses,
+      session_type
     });
     
     res.status(201).json({ status: 'success', data: response });
@@ -286,7 +289,8 @@ const getEvaluationResponses = async (req, res, next) => {
       return res.status(404).json({ status: 'error', message: 'Event not found' });
     }
 
-    const responses = await eventModel.getEvaluationResponses(id);
+    const { sessionType } = req.query;
+    const responses = await eventModel.getEvaluationResponses(id, sessionType);
     res.status(200).json({ status: 'success', data: responses });
   } catch (err) {
     next(err);

@@ -69,6 +69,7 @@ create table if not exists public.event_quotas (
     event_id uuid references public.events(id) on delete cascade not null,
     name text not null, -- e.g. "Student", "Guest"
     capacity integer not null check (capacity >= 0),
+    is_open boolean default true,
     created_at timestamptz default now()
 );
 

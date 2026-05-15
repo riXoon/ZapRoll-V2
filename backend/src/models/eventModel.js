@@ -232,6 +232,14 @@ const updateEvent = async (eventId, eventData, adminId, quotas = []) => {
 
   if (eventError) throw eventError;
 
+  // 1.1 Sync pre_reg_open status to all quotas if it was changed
+  if (eventData.pre_reg_open !== undefined) {
+    await supabase
+      .from('event_quotas')
+      .update({ is_open: eventData.pre_reg_open })
+      .eq('event_id', eventId);
+  }
+
   if (quotas && quotas.length > 0) {
     // 1. Identify which quotas to keep/update (Only real UUIDs)
     const currentQuotaIds = quotas
@@ -256,7 +264,8 @@ const updateEvent = async (eventId, eventData, adminId, quotas = []) => {
         name: q.name,
         capacity: q.capacity,
         registration_url: q.registration_url,
-        event_id: eventId
+        event_id: eventId,
+        is_open: eventData.pre_reg_open !== undefined ? eventData.pre_reg_open : (q.is_open !== undefined ? q.is_open : true)
       };
       if (q.id && q.id.length > 20) data.id = q.id;
       return data;
@@ -442,6 +451,22 @@ const findAndAttend = async (eventId, searchCriteria, sessionType, force = false
 const registerWalkin = async (eventId, adminId, walkinData) => {
   const { fullName, email, quotaId, sessionType, externalId, metadata } = walkinData;
 
+  // 0. Check if registration is open (Check the specific quota)
+  const { data: quota, error: quotaError } = await supabase
+    .from('event_quotas')
+    .select('is_open, name')
+    .eq('id', quotaId)
+    .single();
+
+  if (quotaError) {
+    if (quotaError.code === 'PGRST116') throw new Error('Selected role quota not found.');
+    throw quotaError;
+  }
+
+  if (quota && !quota.is_open) {
+    throw new Error(`Registration for ${quota.name} is currently closed.`);
+  }
+
   // 1. Create or Update the registration record (Upsert)
   const insertData = {
     event_id: eventId,
@@ -476,11 +501,12 @@ const registerWalkin = async (eventId, adminId, walkinData) => {
   }
 };
 
-const getEvaluationTemplate = async (eventId) => {
+const getEvaluationTemplate = async (eventId, sessionType = 'am-eval') => {
   const { data, error } = await supabase
     .from('evaluation_templates')
     .select('*')
     .eq('event_id', eventId)
+    .eq('session_type', sessionType)
     .single();
 
   if (error && error.code !== 'PGRST116') throw error;
@@ -488,17 +514,18 @@ const getEvaluationTemplate = async (eventId) => {
 };
 
 const saveEvaluationTemplate = async (eventId, templateData) => {
-  const { title, questions, is_active } = templateData;
+  const { title, questions, is_active, session_type } = templateData;
   
   const { data, error } = await supabase
     .from('evaluation_templates')
     .upsert({
       event_id: eventId,
+      session_type: session_type || 'am-eval',
       title: title || 'Evaluation Form',
       questions: questions,
       is_active: is_active !== undefined ? is_active : true
     }, {
-      onConflict: 'event_id'
+      onConflict: 'event_id,session_type'
     })
     .select()
     .single();
@@ -508,13 +535,14 @@ const saveEvaluationTemplate = async (eventId, templateData) => {
 };
 
 const saveEvaluationResponse = async (eventId, responseData) => {
-  const { registration_id, session_id, responses } = responseData;
+  const { registration_id, session_id, responses, session_type } = responseData;
   
-  // 1. Get the template_id for this event
+  // 1. Get the template_id for this event and session type
   const { data: template, error: tError } = await supabase
     .from('evaluation_templates')
     .select('id')
     .eq('event_id', eventId)
+    .eq('session_type', session_type || 'am-eval')
     .single();
 
   if (tError) throw new Error('Evaluation template not found for this event');
@@ -535,12 +563,13 @@ const saveEvaluationResponse = async (eventId, responseData) => {
   return data;
 };
 
-const getEvaluationResponses = async (eventId) => {
-  // 1. Get the template_id for this event
+const getEvaluationResponses = async (eventId, sessionType = 'am-eval') => {
+  // 1. Get the template_id for this event and session type
   const { data: template, error: tError } = await supabase
     .from('evaluation_templates')
     .select('id')
     .eq('event_id', eventId)
+    .eq('session_type', sessionType)
     .single();
 
   if (tError) {
@@ -553,7 +582,7 @@ const getEvaluationResponses = async (eventId) => {
     .from('evaluation_responses')
     .select(`
       *,
-      registrations(full_name, email, external_id)
+      registrations(full_name, email, external_id, metadata)
     `)
     .eq('template_id', template.id);
 
