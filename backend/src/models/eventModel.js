@@ -292,19 +292,31 @@ const updateRegistrationSettings = async (eventId, adminId, settings) => {
     { type: 'walkin-guest', link: 'guest_reg_link', open: 'guest_reg_open', name: 'Guest Registration' }
   ];
 
-  const sessionData = sessionTypes.map(s => ({
-    event_id: eventId,
-    session_type: s.type,
-    name: s.name,
-    registration_link: settings[s.link] || '',
-    is_open: settings[s.open] || false
-  }));
+  for (const s of sessionTypes) {
+    const sessionUpdate = {
+      event_id: eventId,
+      session_type: s.type
+    };
 
-  const { error: sessionError } = await supabase
-    .from('sessions')
-    .upsert(sessionData, { onConflict: 'event_id,session_type' });
+    let hasChange = false;
+    if (settings[s.link] !== undefined) {
+      sessionUpdate.registration_link = settings[s.link];
+      hasChange = true;
+    }
+    if (settings[s.open] !== undefined) {
+      sessionUpdate.is_open = settings[s.open];
+      hasChange = true;
+    }
 
-  if (sessionError) throw sessionError;
+    if (hasChange) {
+      if (s.name) sessionUpdate.name = s.name;
+      const { error } = await supabase
+        .from('sessions')
+        .upsert(sessionUpdate, { onConflict: 'event_id,session_type' });
+      
+      if (error) throw error;
+    }
+  }
 
   // 2. Handle Post-Event Settings (New Table)
   const postEventTypes = [
@@ -313,18 +325,30 @@ const updateRegistrationSettings = async (eventId, adminId, settings) => {
     { type: 'poster-clearance', link: 'poster_clearance_link', open: 'poster_clearance_open' }
   ];
 
-  const postEventData = postEventTypes.map(p => ({
-    event_id: eventId,
-    session_type: p.type,
-    registration_link: settings[p.link] || '',
-    is_open: settings[p.open] || false
-  }));
+  for (const p of postEventTypes) {
+    const postUpdate = {
+      event_id: eventId,
+      session_type: p.type
+    };
 
-  const { error: postEventError } = await supabase
-    .from('post_event_settings')
-    .upsert(postEventData, { onConflict: 'event_id,session_type' });
+    let hasChange = false;
+    if (settings[p.link] !== undefined) {
+      postUpdate.registration_link = settings[p.link];
+      hasChange = true;
+    }
+    if (settings[p.open] !== undefined) {
+      postUpdate.is_open = settings[p.open];
+      hasChange = true;
+    }
 
-  if (postEventError) throw postEventError;
+    if (hasChange) {
+      const { error } = await supabase
+        .from('post_event_settings')
+        .upsert(postUpdate, { onConflict: 'event_id,session_type' });
+      
+      if (error) throw error;
+    }
+  }
 
   return { status: 'success' };
 };
@@ -340,10 +364,14 @@ const updateSessionStatus = async (eventId, sessionType, isOpen) => {
     is_open: isOpen
   };
 
+  // Only add name for new session entries if it's a 'sessions' table type
   if (table === 'sessions') {
     updateData.name = sessionType.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
   }
 
+  // We use upsert with onConflict to either insert a new status or update the existing one
+  // Crucially, by only providing event_id, session_type, and is_open, 
+  // we avoid overwriting registration_link if it already exists.
   const { data, error } = await supabase
     .from(table)
     .upsert(updateData, { 
