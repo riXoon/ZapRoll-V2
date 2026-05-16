@@ -685,6 +685,17 @@ const getCertificateWhitelist = async (eventId) => {
   return data;
 };
 
+const getPosterClearanceWhitelist = async (eventId) => {
+  const { data, error } = await supabase
+    .from('v_poster_clearance_whitelist')
+    .select('*')
+    .eq('event_id', eventId)
+    .eq('is_eligible', true);
+
+  if (error) throw error;
+  return data;
+};
+
 module.exports = {
   getAllEvents,
   getEventById,
@@ -700,5 +711,6 @@ module.exports = {
   saveEvaluationTemplate,
   saveEvaluationResponse,
   getEvaluationResponses,
-  getCertificateWhitelist
+  getCertificateWhitelist,
+  getPosterClearanceWhitelist
 };

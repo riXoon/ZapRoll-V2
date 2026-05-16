@@ -25,6 +25,7 @@ router.post('/manual-register', eventController.manualRegister);
 // Evaluation Design Routes (Protected)
 router.get('/:id/evaluation-responses', eventController.getEvaluationResponses);
 router.get('/:id/certificate-whitelist', eventController.getCertificateWhitelist);
+router.get('/:id/poster-clearance-whitelist', eventController.getPosterClearanceWhitelist);
 router.post('/:id/evaluation-template', eventController.saveEvaluationTemplate);
 
 module.exports = router;
