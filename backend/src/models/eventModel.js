@@ -12,8 +12,8 @@ const getAllEvents = async (adminId) => {
       .select(`
         *,
         event_quotas(*, registrations(count)),
-        registrations(count),
-        attendance(*, registrations!participant_id(quota_id, reg_type)),
+        registrations_list:registrations(reg_type, metadata),
+        attendance(*, registrations!participant_id(quota_id, reg_type, metadata)),
         sessions(*),
         post_event_settings(*)
       `)
@@ -57,19 +57,29 @@ const getAllEvents = async (adminId) => {
   // Post-process to flatten stats and counts
   return data.map(event => {
     const amCount = (event.attendance || []).filter(a => a.am_scanned_at).length;
-    const pmCount = (event.attendance || []).filter(a => a.pm_scanned_at).length;
+    const pmCount = (event.attendance || []).filter(a => a.pm_scanned_at && !(a.registrations?.metadata?.studentRole === 'Poster Presenter' && a.registrations?.metadata?.yearLevel === '4th Year')).length;
+    const posterClearanceCount = (event.attendance || []).filter(a => a.pm_scanned_at && (a.registrations?.metadata?.studentRole === 'Poster Presenter' && a.registrations?.metadata?.yearLevel === '4th Year')).length;
     const empCount = (event.attendance || []).filter(a => a.employee_scanned_at).length;
     
     // Breakdown by registration type
     const preRegTurnout = (event.attendance || []).filter(a => a.registrations?.reg_type === 'pre-reg').length;
     const walkinTurnout = (event.attendance || []).filter(a => a.registrations?.reg_type === 'walk-in').length;
     
+    // Poster Presenter Separation
+    // Note: In a real scenario, we might want to fetch these counts in the initial query, 
+    // but for now we'll calculate them if metadata is available, or use a heuristic.
+    // Since we only have 'count' from the join, we can't filter it here easily.
+    // We'll add a placeholder or a separate fetch if needed, but for now we'll 
+    // assume the 'Student' role quota might contain them.
+    
     const uniqueAttendeeIds = new Set((event.attendance || []).map(a => a.participant_id));
+    const totalReg = (event.registrations_list || []).length;
 
     return {
       ...event,
       student_am_count: amCount,
       student_pm_count: pmCount,
+      poster_clearance_count: posterClearanceCount,
       employee_reg_count: empCount,
       event_quotas: (event.event_quotas || []).map(q => {
         // Calculate how many UNIQUE people in THIS role have attended ANY session
@@ -86,11 +96,18 @@ const getAllEvents = async (adminId) => {
         };
       }),
       stats: {
-        total_registrations: event.registrations[0]?.count || 0,
+        total_registrations: totalReg,
+        total_pre_reg: (event.registrations_list || []).filter(r => r.reg_type === 'pre-reg').length,
         total_attended: uniqueAttendeeIds.size, 
         pre_reg_turnout: preRegTurnout,
         walkin_turnout: walkinTurnout,
-        total_pending: Math.max(0, (event.registrations[0]?.count || 0) - uniqueAttendeeIds.size)
+        total_pending: Math.max(0, totalReg - uniqueAttendeeIds.size),
+        poster_presenters_registered: (event.registrations_list || []).filter(r => r.metadata?.studentRole === 'Poster Presenter' && r.metadata?.yearLevel === '4th Year').length,
+        poster_attended_count: posterClearanceCount,
+        colloquium_presenters_registered: (event.registrations_list || []).filter(r => r.metadata?.studentRole === 'Colloquium Presenter' && r.metadata?.yearLevel === '4th Year').length,
+        colloquium_presenters_attended: (event.attendance || []).filter(a => a.registrations?.metadata?.studentRole === 'Colloquium Presenter' && a.registrations?.metadata?.yearLevel === '4th Year').length,
+        colloquium_participants_registered: (event.registrations_list || []).filter(r => r.metadata?.studentRole === 'Colloquium Participant' && r.metadata?.yearLevel === '4th Year').length,
+        colloquium_participants_attended: (event.attendance || []).filter(a => a.registrations?.metadata?.studentRole === 'Colloquium Participant' && a.registrations?.metadata?.yearLevel === '4th Year').length
       }
     };
   });
@@ -102,7 +119,7 @@ const getEventById = async (eventId, adminId) => {
     .select(`
       *,
       event_quotas(*, registrations(count)),
-      registrations(count),
+      registrations_list:registrations(reg_type, metadata),
       sessions(*),
       post_event_settings(*),
       attendance(*, registrations!participant_id(quota_id, reg_type))
@@ -148,10 +165,38 @@ const getEventById = async (eventId, adminId) => {
     throw error;
   }
   
-  const amCount = (data.attendance || []).filter(a => a.am_scanned_at).length;
-  const pmCount = (data.attendance || []).filter(a => a.pm_scanned_at).length;
-  const empCount = (data.attendance || []).filter(a => a.employee_scanned_at).length;
+  // Fetch separate counts for colloquium and poster presenters
+  const { data: roleData, error: roleError } = await supabase
+    .from('registrations')
+    .select('metadata->>studentRole, reg_type, id')
+    .eq('event_id', eventId)
+    .eq('metadata->>yearLevel', '4th Year');
 
+  const roleRegs = roleData || [];
+  const posterRegCount = roleRegs.filter(r => r.studentRole === 'Poster Presenter').length;
+  const colPresenterCount = roleRegs.filter(r => r.studentRole === 'Colloquium Presenter').length;
+  const colParticipantCount = roleRegs.filter(r => r.studentRole === 'Colloquium Participant').length;
+
+  // Fetch attendance for these roles
+  const { data: attendanceData } = await supabase
+    .from('attendance')
+    .select('registration_id, registrations!inner(metadata->>studentRole, metadata->>yearLevel)')
+    .eq('event_id', eventId)
+    .eq('registrations.metadata->>yearLevel', '4th Year');
+
+  const roleAttended = attendanceData || [];
+  const posterAttendedCount = new Set(roleAttended.filter(a => a.registrations.studentRole === 'Poster Presenter').map(a => a.registration_id)).size;
+  const colPresenterAttended = new Set(roleAttended.filter(a => a.registrations.studentRole === 'Colloquium Presenter').map(a => a.registration_id)).size;
+  const colParticipantAttended = new Set(roleAttended.filter(a => a.registrations.studentRole === 'Colloquium Participant').map(a => a.registration_id)).size;
+
+  const totalReg = (data.registrations_list || []).length;
+  const colloquiumRegCount = Math.max(0, totalReg - posterRegCount);
+
+  // Pre-process counts from 'data'
+  const amCount = (data.attendance || []).filter(a => a.am_scanned_at).length;
+  const pmCount = (data.attendance || []).filter(a => a.pm_scanned_at && !(a.registrations?.metadata?.studentRole === 'Poster Presenter' && a.registrations?.metadata?.yearLevel === '4th Year')).length;
+  const posterClearanceCount = (data.attendance || []).filter(a => a.pm_scanned_at && (a.registrations?.metadata?.studentRole === 'Poster Presenter' && a.registrations?.metadata?.yearLevel === '4th Year')).length;
+  const empCount = (data.attendance || []).filter(a => a.employee_scanned_at).length;
   const preRegTurnout = (data.attendance || []).filter(a => a.registrations?.reg_type === 'pre-reg').length;
   const walkinTurnout = (data.attendance || []).filter(a => a.registrations?.reg_type === 'walk-in').length;
 
@@ -159,17 +204,28 @@ const getEventById = async (eventId, adminId) => {
     ...data,
     student_am_count: amCount,
     student_pm_count: pmCount,
+    poster_clearance_count: posterClearanceCount,
     employee_reg_count: empCount,
     event_quotas: (data.event_quotas || []).map(q => ({
       ...q,
       used_capacity: q.registrations[0]?.count || 0
     })),
     stats: {
-      total_registrations: data.registrations[0]?.count || 0,
+      total_registrations: totalReg,
+      total_pre_reg: (data.registrations_list || []).filter(r => r.reg_type === 'pre-reg').length,
+      colloquium_registered: colloquiumRegCount,
+      poster_presenters_registered: posterRegCount,
+      poster_pre_reg_count: roleRegs.filter(r => r.studentRole === 'Poster Presenter' && r.reg_type === 'pre-reg').length,
+      poster_walkin_count: roleRegs.filter(r => r.studentRole === 'Poster Presenter' && r.reg_type === 'walk-in').length,
+      poster_attended_count: posterAttendedCount,
+      colloquium_presenters_registered: colPresenterCount,
+      colloquium_presenters_attended: colPresenterAttended,
+      colloquium_participants_registered: colParticipantCount,
+      colloquium_participants_attended: colParticipantAttended,
       total_attended: preRegTurnout + walkinTurnout, 
       pre_reg_turnout: preRegTurnout,
       walkin_turnout: walkinTurnout,
-      total_pending: Math.max(0, (data.registrations[0]?.count || 0) - (preRegTurnout + walkinTurnout))
+      total_pending: Math.max(0, totalReg - (preRegTurnout + walkinTurnout))
     }
   };
 };
