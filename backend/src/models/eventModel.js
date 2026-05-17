@@ -682,18 +682,69 @@ const getCertificateWhitelist = async (eventId) => {
     .eq('is_eligible', true);
 
   if (error) throw error;
-  return data;
+
+  if (data && data.length > 0) {
+    return data.map(item => {
+      let parsedMetadata = item.metadata;
+      if (typeof parsedMetadata === 'string') {
+        try {
+          parsedMetadata = JSON.parse(parsedMetadata);
+        } catch (e) {
+          console.warn('Failed to parse certificate metadata string:', e);
+        }
+      }
+      return {
+        ...item,
+        metadata: parsedMetadata
+      };
+    });
+  }
+
+  return data || [];
 };
 
 const getPosterClearanceWhitelist = async (eventId) => {
-  const { data, error } = await supabase
-    .from('v_poster_clearance_whitelist')
+  // First attempt to query v_poster_clearance_eligibility view as defined by the user
+  let { data, error } = await supabase
+    .from('v_poster_clearance_eligibility')
     .select('*')
     .eq('event_id', eventId)
     .eq('is_eligible', true);
 
-  if (error) throw error;
-  return data;
+  // If table/view does not exist, fall back to v_poster_clearance_whitelist
+  if (error && (error.code === '42P01' || error.message?.includes('Could not find the table') || error.code === 'PGRST204')) {
+    const fallback = await supabase
+      .from('v_poster_clearance_whitelist')
+      .select('*')
+      .eq('event_id', eventId)
+      .eq('is_eligible', true);
+    
+    if (fallback.error) throw fallback.error;
+    data = fallback.data;
+    error = null;
+  } else if (error) {
+    throw error;
+  }
+
+  // Robustly parse double-stringified metadata if returned as a string
+  if (data && data.length > 0) {
+    return data.map(item => {
+      let parsedMetadata = item.metadata;
+      if (typeof parsedMetadata === 'string') {
+        try {
+          parsedMetadata = JSON.parse(parsedMetadata);
+        } catch (e) {
+          console.warn('Failed to parse poster clearance metadata string:', e);
+        }
+      }
+      return {
+        ...item,
+        metadata: parsedMetadata
+      };
+    });
+  }
+
+  return data || [];
 };
 
 module.exports = {
