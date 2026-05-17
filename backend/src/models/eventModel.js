@@ -17,7 +17,6 @@ const getAllEvents = async (adminId) => {
         sessions(*),
         post_event_settings(*)
       `)
-      .eq('created_by', adminId)
       .order('event_date', { ascending: false });
 
     if (error) {
@@ -31,7 +30,6 @@ const getAllEvents = async (adminId) => {
             registrations(count),
             post_event_settings(*)
           `)
-          .eq('created_by', adminId)
           .order('event_date', { ascending: false });
         
         if (fallbackError) throw fallbackError;
@@ -125,7 +123,6 @@ const getEventById = async (eventId, adminId) => {
       attendance(*, registrations!participant_id(quota_id, reg_type))
     `)
     .eq('id', eventId)
-    .eq('created_by', adminId)
     .single();
 
   if (error) {
@@ -142,7 +139,6 @@ const getEventById = async (eventId, adminId) => {
           post_event_settings(*)
         `)
         .eq('id', eventId)
-        .eq('created_by', adminId)
         .single();
       
       if (fallbackError) throw fallbackError;
@@ -282,7 +278,6 @@ const updateEvent = async (eventId, eventData, adminId, quotas = []) => {
       .from('events')
       .update(updateData)
     .eq('id', eventId)
-    .eq('created_by', adminId)
     .select()
     .single();
 
@@ -444,8 +439,7 @@ const deleteEvent = async (eventId, adminId) => {
   const { error } = await supabase
     .from('events')
     .delete()
-    .eq('id', eventId)
-    .eq('created_by', adminId);
+    .eq('id', eventId);
 
   if (error) throw error;
   return true;

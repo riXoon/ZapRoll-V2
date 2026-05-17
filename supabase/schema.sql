@@ -282,37 +282,37 @@ do $$
 begin
     -- Events
     drop policy if exists admin_all_on_events on public.events;
-    create policy admin_all_on_events on public.events for all using (auth.uid() = created_by);
+    create policy admin_all_on_events on public.events for all using (auth.role() = 'authenticated');
 
     -- Quotas
     drop policy if exists admin_all_on_quotas on public.event_quotas;
-    create policy admin_all_on_quotas on public.event_quotas for all using (
-        exists (select 1 from public.events where id = event_id and created_by = auth.uid())
-    );
+    create policy admin_all_on_quotas on public.event_quotas for all using (auth.role() = 'authenticated');
 
     -- Registrations
     drop policy if exists admin_all_on_registrations on public.registrations;
-    create policy admin_all_on_registrations on public.registrations for all using (
-        exists (select 1 from public.events where id = event_id and created_by = auth.uid())
-    );
+    create policy admin_all_on_registrations on public.registrations for all using (auth.role() = 'authenticated');
 
     -- Sessions
     drop policy if exists admin_all_on_sessions on public.sessions;
-    create policy admin_all_on_sessions on public.sessions for all using (
-        exists (select 1 from public.events where id = event_id and created_by = auth.uid())
-    );
+    create policy admin_all_on_sessions on public.sessions for all using (auth.role() = 'authenticated');
 
     -- Attendance
     drop policy if exists admin_all_on_attendance on public.attendance;
-    create policy admin_all_on_attendance on public.attendance for all using (
-        exists (
-            select 1 from public.registrations r 
-            join public.events e on r.event_id = e.id 
-            where r.id = registration_id and e.created_by = auth.uid()
-        )
-    );
+    create policy admin_all_on_attendance on public.attendance for all using (auth.role() = 'authenticated');
 
-    -- Evaluations
+    -- Templates
+    drop policy if exists admin_all_on_templates on public.evaluation_templates;
+    create policy admin_all_on_templates on public.evaluation_templates for all using (auth.role() = 'authenticated');
+
+    -- Responses
+    drop policy if exists admin_all_on_responses on public.evaluation_responses;
+    create policy admin_all_on_responses on public.evaluation_responses for all using (auth.role() = 'authenticated');
+
+    -- Certificates
+    drop policy if exists admin_all_on_certificates on public.certificates;
+    create policy admin_all_on_certificates on public.certificates for all using (auth.role() = 'authenticated');
+
+    -- Evaluations public fallback rules
     drop policy if exists public_insert_responses on public.evaluation_responses;
     create policy public_insert_responses on public.evaluation_responses for insert with check (
         exists (select 1 from public.registrations where id = registration_id)
