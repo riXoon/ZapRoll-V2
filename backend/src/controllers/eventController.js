@@ -131,7 +131,9 @@ const updateRegistrationSettings = async (req, res, next) => {
       is_am_eval_open,
       is_pm_eval_open,
       poster_clearance_link,
-      poster_clearance_open
+      poster_clearance_open,
+      poster_attendance_link,
+      poster_attendance_open
     } = req.body;
     
     const updatedEvent = await eventModel.updateRegistrationSettings(id, adminId, {
@@ -154,7 +156,9 @@ const updateRegistrationSettings = async (req, res, next) => {
       is_am_eval_open,
       is_pm_eval_open,
       poster_clearance_link,
-      poster_clearance_open
+      poster_clearance_open,
+      poster_attendance_link,
+      poster_attendance_open
     });
     
     res.status(200).json({ status: 'success', data: updatedEvent });

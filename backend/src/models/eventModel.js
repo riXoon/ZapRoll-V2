@@ -1,11 +1,98 @@
 const supabase = require('../config/supabase');
 
+const hasStudentRole = (studentRole, targetRole) => {
+  if (!studentRole) return false;
+  const normalizedTarget = targetRole.toLowerCase().trim();
+  
+  const checkSingle = (roleStr) => {
+    const s = roleStr.toLowerCase().trim();
+    if (s === normalizedTarget) return true;
+    
+    // Support matching 'poster' to 'poster presenter' and vice versa
+    if (normalizedTarget.includes('poster') && s.includes('poster')) return true;
+    if (normalizedTarget.includes('presenter') && s.includes('presenter') && !s.includes('poster') && !normalizedTarget.includes('poster')) return true;
+    if (normalizedTarget.includes('participant') && s.includes('participant')) return true;
+    
+    return false;
+  };
+
+  if (Array.isArray(studentRole)) {
+    return studentRole.some(r => checkSingle(String(r)));
+  }
+  
+  if (typeof studentRole === 'string') {
+    const trimmed = studentRole.trim();
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed.some(r => checkSingle(String(r)));
+        }
+      } catch (e) {
+        // Fall back
+      }
+    }
+    return checkSingle(trimmed);
+  }
+  return false;
+};
+
+
+const checkAllEventDeadlines = async () => {
+  try {
+    const now = new Date().toISOString();
+    const { data: openEvents, error } = await supabase
+      .from('events')
+      .select('id, pre_reg_deadline')
+      .eq('pre_reg_open', true)
+      .not('pre_reg_deadline', 'is', null)
+      .lt('pre_reg_deadline', now);
+
+    if (error) {
+      console.error('Error fetching expired event deadlines:', error);
+      return;
+    }
+
+    if (!openEvents || openEvents.length === 0) {
+      return;
+    }
+
+    const expiredEventIds = openEvents.map(event => event.id);
+    console.log(`[DEADLINE ENFORCER] Found ${expiredEventIds.length} expired pre-registrations. Closing...`);
+
+    // 1. Set pre_reg_open to false for expired events
+    const { error: updateError } = await supabase
+      .from('events')
+      .update({ pre_reg_open: false })
+      .in('id', expiredEventIds);
+
+    if (updateError) {
+      console.error('Error updating expired events:', updateError);
+      return;
+    }
+
+    // 2. Set is_open to false for all quotas associated with the expired events
+    const { error: quotaError } = await supabase
+      .from('event_quotas')
+      .update({ is_open: false })
+      .in('event_id', expiredEventIds);
+
+    if (quotaError) {
+      console.error('Error updating quotas for expired events:', quotaError);
+    }
+  } catch (err) {
+    console.error('Error in checkAllEventDeadlines:', err);
+  }
+};
+
+
 /**
  * Model for interacting with the events table in Supabase.
  * All functions ensure that the admin can only access their own events.
  */
 
 const getAllEvents = async (adminId) => {
+  await checkAllEventDeadlines();
   // Fetch events with their quotas and stats
     const { data, error } = await supabase
       .from('events')
@@ -55,8 +142,8 @@ const getAllEvents = async (adminId) => {
   // Post-process to flatten stats and counts
   return data.map(event => {
     const amCount = (event.attendance || []).filter(a => a.am_scanned_at).length;
-    const pmCount = (event.attendance || []).filter(a => a.pm_scanned_at && !(a.registrations?.metadata?.studentRole === 'Poster Presenter' && a.registrations?.metadata?.yearLevel === '4th Year')).length;
-    const posterClearanceCount = (event.attendance || []).filter(a => a.pm_scanned_at && (a.registrations?.metadata?.studentRole === 'Poster Presenter' && a.registrations?.metadata?.yearLevel === '4th Year')).length;
+    const pmCount = (event.attendance || []).filter(a => a.pm_scanned_at && !(hasStudentRole(a.registrations?.metadata?.studentRole, 'Poster Presenter') && a.registrations?.metadata?.yearLevel === '4th Year')).length;
+    const posterClearanceCount = (event.attendance || []).filter(a => a.poster_scanned_at && (hasStudentRole(a.registrations?.metadata?.studentRole, 'Poster Presenter') && a.registrations?.metadata?.yearLevel === '4th Year')).length;
     const empCount = (event.attendance || []).filter(a => a.employee_scanned_at).length;
     
     // Breakdown by registration type
@@ -100,18 +187,19 @@ const getAllEvents = async (adminId) => {
         pre_reg_turnout: preRegTurnout,
         walkin_turnout: walkinTurnout,
         total_pending: Math.max(0, totalReg - uniqueAttendeeIds.size),
-        poster_presenters_registered: (event.registrations_list || []).filter(r => r.metadata?.studentRole === 'Poster Presenter' && r.metadata?.yearLevel === '4th Year').length,
+        poster_presenters_registered: (event.registrations_list || []).filter(r => hasStudentRole(r.metadata?.studentRole, 'Poster Presenter') && r.metadata?.yearLevel === '4th Year').length,
         poster_attended_count: posterClearanceCount,
-        colloquium_presenters_registered: (event.registrations_list || []).filter(r => r.metadata?.studentRole === 'Colloquium Presenter' && r.metadata?.yearLevel === '4th Year').length,
-        colloquium_presenters_attended: (event.attendance || []).filter(a => a.registrations?.metadata?.studentRole === 'Colloquium Presenter' && a.registrations?.metadata?.yearLevel === '4th Year').length,
-        colloquium_participants_registered: (event.registrations_list || []).filter(r => r.metadata?.studentRole === 'Colloquium Participant' && r.metadata?.yearLevel === '4th Year').length,
-        colloquium_participants_attended: (event.attendance || []).filter(a => a.registrations?.metadata?.studentRole === 'Colloquium Participant' && a.registrations?.metadata?.yearLevel === '4th Year').length
+        colloquium_presenters_registered: (event.registrations_list || []).filter(r => hasStudentRole(r.metadata?.studentRole, 'Colloquium Presenter') && r.metadata?.yearLevel === '4th Year').length,
+        colloquium_presenters_attended: (event.attendance || []).filter(a => hasStudentRole(a.registrations?.metadata?.studentRole, 'Colloquium Presenter') && a.registrations?.metadata?.yearLevel === '4th Year').length,
+        colloquium_participants_registered: (event.registrations_list || []).filter(r => hasStudentRole(r.metadata?.studentRole, 'Colloquium Participant') && r.metadata?.yearLevel === '4th Year').length,
+        colloquium_participants_attended: (event.attendance || []).filter(a => hasStudentRole(a.registrations?.metadata?.studentRole, 'Colloquium Participant') && a.registrations?.metadata?.yearLevel === '4th Year').length
       }
     };
   });
 };
 
 const getEventById = async (eventId, adminId) => {
+  await checkAllEventDeadlines();
   const { data, error } = await supabase
     .from('events')
     .select(`
@@ -120,7 +208,7 @@ const getEventById = async (eventId, adminId) => {
       registrations_list:registrations(reg_type, metadata),
       sessions(*),
       post_event_settings(*),
-      attendance(*, registrations!participant_id(quota_id, reg_type))
+      attendance(*, registrations!participant_id(quota_id, reg_type, metadata))
     `)
     .eq('id', eventId)
     .single();
@@ -169,29 +257,29 @@ const getEventById = async (eventId, adminId) => {
     .eq('metadata->>yearLevel', '4th Year');
 
   const roleRegs = roleData || [];
-  const posterRegCount = roleRegs.filter(r => r.studentRole === 'Poster Presenter').length;
-  const colPresenterCount = roleRegs.filter(r => r.studentRole === 'Colloquium Presenter').length;
-  const colParticipantCount = roleRegs.filter(r => r.studentRole === 'Colloquium Participant').length;
+  const posterRegCount = roleRegs.filter(r => hasStudentRole(r.studentRole, 'Poster Presenter')).length;
+  const colPresenterCount = roleRegs.filter(r => hasStudentRole(r.studentRole, 'Colloquium Presenter')).length;
+  const colParticipantCount = roleRegs.filter(r => hasStudentRole(r.studentRole, 'Colloquium Participant')).length;
 
   // Fetch attendance for these roles
   const { data: attendanceData } = await supabase
     .from('attendance')
-    .select('registration_id, registrations!inner(metadata->>studentRole, metadata->>yearLevel)')
+    .select('registration_id, poster_scanned_at, registrations!inner(metadata->>studentRole, metadata->>yearLevel)')
     .eq('event_id', eventId)
     .eq('registrations.metadata->>yearLevel', '4th Year');
 
   const roleAttended = attendanceData || [];
-  const posterAttendedCount = new Set(roleAttended.filter(a => a.registrations.studentRole === 'Poster Presenter').map(a => a.registration_id)).size;
-  const colPresenterAttended = new Set(roleAttended.filter(a => a.registrations.studentRole === 'Colloquium Presenter').map(a => a.registration_id)).size;
-  const colParticipantAttended = new Set(roleAttended.filter(a => a.registrations.studentRole === 'Colloquium Participant').map(a => a.registration_id)).size;
+  const posterAttendedCount = new Set(roleAttended.filter(a => hasStudentRole(a.registrations?.studentRole, 'Poster Presenter') && a.poster_scanned_at).map(a => a.registration_id)).size;
+  const colPresenterAttended = new Set(roleAttended.filter(a => hasStudentRole(a.registrations?.studentRole, 'Colloquium Presenter')).map(a => a.registration_id)).size;
+  const colParticipantAttended = new Set(roleAttended.filter(a => hasStudentRole(a.registrations?.studentRole, 'Colloquium Participant')).map(a => a.registration_id)).size;
 
   const totalReg = (data.registrations_list || []).length;
   const colloquiumRegCount = Math.max(0, totalReg - posterRegCount);
 
   // Pre-process counts from 'data'
   const amCount = (data.attendance || []).filter(a => a.am_scanned_at).length;
-  const pmCount = (data.attendance || []).filter(a => a.pm_scanned_at && !(a.registrations?.metadata?.studentRole === 'Poster Presenter' && a.registrations?.metadata?.yearLevel === '4th Year')).length;
-  const posterClearanceCount = (data.attendance || []).filter(a => a.pm_scanned_at && (a.registrations?.metadata?.studentRole === 'Poster Presenter' && a.registrations?.metadata?.yearLevel === '4th Year')).length;
+  const pmCount = (data.attendance || []).filter(a => a.pm_scanned_at && !(hasStudentRole(a.registrations?.metadata?.studentRole, 'Poster Presenter') && a.registrations?.metadata?.yearLevel === '4th Year')).length;
+  const posterClearanceCount = (data.attendance || []).filter(a => a.poster_scanned_at && (hasStudentRole(a.registrations?.metadata?.studentRole, 'Poster Presenter') && a.registrations?.metadata?.yearLevel === '4th Year')).length;
   const empCount = (data.attendance || []).filter(a => a.employee_scanned_at).length;
   const preRegTurnout = (data.attendance || []).filter(a => a.registrations?.reg_type === 'pre-reg').length;
   const walkinTurnout = (data.attendance || []).filter(a => a.registrations?.reg_type === 'walk-in').length;
@@ -211,8 +299,8 @@ const getEventById = async (eventId, adminId) => {
       total_pre_reg: (data.registrations_list || []).filter(r => r.reg_type === 'pre-reg').length,
       colloquium_registered: colloquiumRegCount,
       poster_presenters_registered: posterRegCount,
-      poster_pre_reg_count: roleRegs.filter(r => r.studentRole === 'Poster Presenter' && r.reg_type === 'pre-reg').length,
-      poster_walkin_count: roleRegs.filter(r => r.studentRole === 'Poster Presenter' && r.reg_type === 'walk-in').length,
+      poster_pre_reg_count: roleRegs.filter(r => hasStudentRole(r.studentRole, 'Poster Presenter') && r.reg_type === 'pre-reg').length,
+      poster_walkin_count: roleRegs.filter(r => hasStudentRole(r.studentRole, 'Poster Presenter') && r.reg_type === 'walk-in').length,
       poster_attended_count: posterAttendedCount,
       colloquium_presenters_registered: colPresenterCount,
       colloquium_presenters_attended: colPresenterAttended,
@@ -340,7 +428,8 @@ const updateRegistrationSettings = async (eventId, adminId, settings) => {
     { type: 'employee-reg', link: 'employee_reg_link', open: 'employee_reg_open', name: 'Employee Registration' },
     { type: 'walkin-student', link: 'walkin_student_link', open: 'walkin_student_open', name: 'Walk-in Student' },
     { type: 'walkin-employee', link: 'walkin_employee_link', open: 'walkin_employee_open', name: 'Walk-in Employee' },
-    { type: 'walkin-guest', link: 'guest_reg_link', open: 'guest_reg_open', name: 'Guest Registration' }
+    { type: 'walkin-guest', link: 'guest_reg_link', open: 'guest_reg_open', name: 'Guest Registration' },
+    { type: 'poster-attendance', link: 'poster_attendance_link', open: 'poster_attendance_open', name: 'Poster Attendance' }
   ];
 
   for (const s of sessionTypes) {
@@ -450,6 +539,7 @@ const recordAttendance = async (eventId, participantId, sessionType, force = fal
   if (sessionType === 'am-reg' || sessionType === 'walkin-student' || sessionType === 'walkin-guest' || sessionType === 'am-eval') updateField = 'am_scanned_at';
   else if (sessionType === 'pm-reg' || sessionType === 'poster-clearance' || sessionType === 'pm-eval') updateField = 'pm_scanned_at';
   else if (sessionType === 'employee-reg' || sessionType === 'walkin-employee') updateField = 'employee_scanned_at';
+  else if (sessionType === 'poster-attendance') updateField = 'poster_scanned_at';
   else throw new Error('Invalid session type');
 
   if (!force) {
@@ -493,6 +583,7 @@ const recordAttendance = async (eventId, participantId, sessionType, force = fal
   return data;
 };
 const findAndAttend = async (eventId, searchCriteria, sessionType, force = false) => {
+  await checkAllEventDeadlines();
   const { externalId, fullName } = searchCriteria;
   
   // 1. Find the registration
@@ -527,6 +618,7 @@ const findAndAttend = async (eventId, searchCriteria, sessionType, force = false
 };
 
 const registerWalkin = async (eventId, adminId, walkinData) => {
+  await checkAllEventDeadlines();
   const { fullName, email, quotaId, sessionType, externalId, metadata } = walkinData;
 
   // 0. Check if registration is open (Check the specific quota)
