@@ -1,0 +1,28 @@
+{
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://fmdhzimdwgychhlknyqp.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_KEY": "sb_publishable_RZD8s43VkxCP_YlRE0hCjg_AD89XXu4",
+        "EXPO_PUBLIC_API_URL": "https://zap-roll-v2.vercel.app"
+      }
+    },
+    "production": {
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://fmdhzimdwgychhlknyqp.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_KEY": "sb_publishable_RZD8s43VkxCP_YlRE0hCjg_AD89XXu4",
+        "EXPO_PUBLIC_API_URL": "https://zap-roll-v2.vercel.app"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
