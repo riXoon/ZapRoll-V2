@@ -18,9 +18,9 @@ import {
   ArrowLeft, 
   Plus, 
   Trash2, 
+  X,
   Star, 
   Edit3, 
-  Save,
   Activity,
   ChevronRight,
   Info,
@@ -36,6 +36,8 @@ import { supabase } from '../lib/supabase';
 import { API_URL } from '../config/api';
 import { FeedbackModal } from '../components/FeedbackModal';
 import { workspaceRequest } from '../lib/eventWorkspace';
+import { eventLayout } from '../components/eventLayout';
+import { eventPalette as palette } from '../components/eventPalette';
 
 type QuestionType = 'rating' | 'text' | 'choice' | 'likert' | 'privacy' | 'signature' | 'header';
 
@@ -65,26 +67,31 @@ const LIKERT_SCALES = {
   satisfaction: ['Very Dissatisfied', 'Dissatisfied', 'Neutral', 'Satisfied', 'Very Satisfied']
 };
 
+function initialPages(formTitle: string): Page[] {
+  return [{
+    id: 'page_1',
+    title: 'Intro & Privacy',
+    description: 'Welcome participants and get their consent.',
+    questions: [
+      { id: 'q_1', type: 'header', label: formTitle, statements: [], required: false },
+      { id: 'q_2', type: 'privacy', label: 'Data Privacy Notice', statements: [], required: true },
+    ],
+  }];
+}
+
 const EvaluationFormScreen = ({ navigation, route }: any) => {
-  const { eventId, eventName, sessionId, sessionTitle, roleId, roleName, formType, sessionType = 'am-eval' } = route.params || {};
+  const { eventId, eventName, sessionId, sessionTitle, formType, sessionType = 'am-eval' } = route.params || {};
+  const registrationRoles: { id: string; name: string }[] = route.params?.registrationRoles ?? [];
+  const [roleId, setRoleId] = useState(registrationRoles[0]?.id ?? route.params?.roleId);
+  const registration = formType === 'pre-registration' || Boolean(roleId);
   const attendance = formType === 'attendance';
-  const formTitle = roleId ? 'Pre-Registration Form' : attendance ? 'Attendance Form' : 'Evaluation Form';
-  const targetName = roleId ? roleName : sessionTitle;
+  const formTitle = registration ? 'Pre-Registration Form' : attendance ? 'Attendance Form' : 'Evaluation Form';
+  const targetName = registration ? eventName : sessionTitle;
   const workspacePath = roleId ? `/${eventId}/roles/${roleId}/pre-registration-template`
     : sessionId ? `/${eventId}/sessions/${sessionId}/${attendance ? 'attendance' : 'evaluation'}-template` : null;
   const insets = useSafeAreaInsets();
-  
-  const [pages, setPages] = useState<Page[]>([
-    { 
-      id: 'page_1', 
-      title: 'Intro & Privacy', 
-      description: 'Welcome participants and get their consent.',
-      questions: [
-        { id: 'q_1', type: 'header', label: formTitle, statements: [], required: false },
-        { id: 'q_2', type: 'privacy', label: 'Data Privacy Notice', statements: [], required: true }
-      ] 
-    }
-  ]);
+  const roleDrafts = React.useRef(new Map<string, Page[]>());
+  const [pages, setPages] = useState(() => initialPages(formTitle));
   
   const [activePageIndex, setActivePageIndex] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
@@ -132,16 +139,14 @@ const EvaluationFormScreen = ({ navigation, route }: any) => {
     showAlert("Developer Info", "Please select the text in the preview and copy it manually.", "info");
   };
 
-  const fetchTemplate = async () => {
+  const fetchTemplate = async (path = workspacePath) => {
     try {
       setIsLoading(true);
       setLoadError('');
-      if (workspacePath) {
-        const template = await workspaceRequest<{ questions: Page[] } | null>(workspacePath);
-        if (template?.questions.length) {
-          setPages(template.questions);
-          setActivePageIndex(0);
-        }
+      if (path) {
+        const template = await workspaceRequest<{ questions: Page[] } | null>(path);
+        setPages(template?.questions.length ? template.questions : initialPages(formTitle));
+        setActivePageIndex(0);
         return;
       }
       const { data: { session } } = await supabase.auth.getSession();
@@ -171,10 +176,23 @@ const EvaluationFormScreen = ({ navigation, route }: any) => {
         }
       }
     } catch (error) {
-      if (workspacePath) setLoadError(error instanceof Error ? error.message : 'Could not load the form template.');
+      if (path) setLoadError(error instanceof Error ? error.message : 'Could not load the form template.');
       console.error('Error fetching template:', error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const selectRegistrationRole = (id: string) => {
+    if (id === roleId || isLoading || saving.current) return;
+    roleDrafts.current.set(roleId, pages);
+    setRoleId(id);
+    const draft = roleDrafts.current.get(id);
+    if (draft) {
+      setPages(draft);
+      setActivePageIndex(0);
+    } else {
+      void fetchTemplate(`/${eventId}/roles/${id}/pre-registration-template`);
     }
   };
 
@@ -291,15 +309,15 @@ const EvaluationFormScreen = ({ navigation, route }: any) => {
     try {
       setIsSaving(true);
       if (workspacePath) {
-        const saved = await workspaceRequest<{ url: string | null; shared?: boolean }>(workspacePath, {
+        const saved = await workspaceRequest<{ url: string | null }>(workspacePath, {
           title: pages[0].title || formTitle, questions: pages,
         });
         if (saved.url) {
           const url = saved.url;
           showAlert('Form saved', url, 'confirm', () => navigation.navigate('QRGenerator', {
-            url, title: saved.shared ? 'Pre-registration' : targetName || formTitle, eventName,
-            type: roleId ? 'pre-reg' : attendance ? 'session-attendance' : 'session-eval',
-            isPreReg: !!roleId,
+            url, title: registration ? 'Pre-registration' : targetName || formTitle, eventName, eventMode: 'scheduled',
+            type: registration ? 'pre-reg' : attendance ? 'session-attendance' : 'session-eval',
+            isPreReg: registration,
           }), 'Show QR');
         } else {
           showAlert('Form saved', 'Set ZAPROLL_WEBFORM_BASE_URL on the backend to generate a webform link.', 'success');
@@ -354,7 +372,7 @@ const EvaluationFormScreen = ({ navigation, route }: any) => {
   if (loadError) {
     return <View style={[styles.container, { padding: 24, paddingTop: insets.top + 24, gap: 16 }]}>
       <Text accessibilityRole="alert" style={{ color: '#fca5a5' }}>{loadError}</Text>
-      <TouchableOpacity accessibilityRole="button" onPress={fetchTemplate} style={styles.saveBtn}>
+      <TouchableOpacity accessibilityRole="button" onPress={() => fetchTemplate()} style={styles.saveBtn}>
         <Text style={styles.saveBtnText}>Try again</Text>
       </TouchableOpacity>
       <TouchableOpacity accessibilityRole="button" onPress={() => navigation.goBack()} style={styles.saveBtn}>
@@ -377,34 +395,36 @@ const EvaluationFormScreen = ({ navigation, route }: any) => {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-            <ArrowLeft color="white" size={20} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Form Builder</Text>
-        </View>
-        <View style={{ flexDirection: 'row', gap: 10 }}>
-          <TouchableOpacity 
-            onPress={() => setShowJsonModal(true)} 
-            style={[styles.saveBtn, { backgroundColor: '#1e293b', borderWidth: 1, borderColor: '#334155' }]}
-          >
-            <ClipboardCheck color="#3b82f6" size={18} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleSave} disabled={isSaving} style={styles.saveBtn}>
-            {isSaving ? (
-              <ActivityIndicator color="white" size={18} />
-            ) : (
-              <>
-                <Save color="white" size={18} />
-                <Text style={styles.saveBtnText}>Save</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        </View>
+      <View style={[eventLayout.frame, eventLayout.detailHeader]}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back" onPress={() => navigation.goBack()} style={eventLayout.iconButton}>
+          <ArrowLeft color={palette.text} size={20} />
+        </TouchableOpacity>
+        <Text accessibilityRole="header" style={[eventLayout.detailTitle, styles.heading]}>{registration ? 'Pre-registration form' : 'Form builder'}</Text>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="View form JSON"
+          onPress={() => setShowJsonModal(true)} style={eventLayout.iconButton}>
+          <ClipboardCheck color={palette.blue.ink} size={18} />
+        </TouchableOpacity>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={registration ? 'Save category questions' : 'Save form'} accessibilityState={{ disabled: isSaving, busy: isSaving }}
+          onPress={handleSave} disabled={isSaving} style={styles.saveBtn}>
+          {isSaving ? <ActivityIndicator color={palette.text} size={18} /> : <Text style={styles.saveBtnText}>Save</Text>}
+        </TouchableOpacity>
       </View>
 
-      {!!targetName && <Text style={{ color: '#94a3b8', marginHorizontal: 24, marginBottom: 12 }}>{targetName}</Text>}
+      {!!targetName && <Text style={[eventLayout.frame, eventLayout.body, styles.target]}>{targetName}</Text>}
+
+      {registrationRoles.length > 1 && <View style={styles.pageTabsContainer}>
+        <Text style={[eventLayout.frame, eventLayout.body]}>Questions by participant category</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pageTabs}>
+          {registrationRoles.map(role => {
+            const selected = role.id === roleId;
+            return <TouchableOpacity key={role.id} accessibilityRole="tab" accessibilityState={{ selected }}
+              disabled={isSaving} onPress={() => selectRegistrationRole(role.id)}
+              style={[styles.pageTab, selected && styles.activePageTab]}>
+              <Text style={[styles.pageTabText, selected && styles.activePageTabText]}>{role.name}</Text>
+            </TouchableOpacity>;
+          })}
+        </ScrollView>
+      </View>}
 
       {/* JSON Structure Modal */}
       <Modal
@@ -417,8 +437,9 @@ const EvaluationFormScreen = ({ navigation, route }: any) => {
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Developer Reference</Text>
-              <TouchableOpacity onPress={() => setShowJsonModal(false)}>
-                <Trash2 color="#94a3b8" size={20} />
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close"
+                onPress={() => setShowJsonModal(false)} style={eventLayout.iconButton}>
+                <X color={palette.secondary} size={20} />
               </TouchableOpacity>
             </View>
             <Text style={styles.modalSubtitle}>
@@ -441,10 +462,11 @@ const EvaluationFormScreen = ({ navigation, route }: any) => {
 
       {/* Page Tabs */}
       <View style={styles.pageTabsContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pageTabs}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pageTabs} keyboardShouldPersistTaps="handled">
           {pages.map((page, index) => (
             <TouchableOpacity 
               key={page.id} 
+              accessibilityRole="tab" accessibilityState={{ selected: activePageIndex === index }}
               onPress={() => setActivePageIndex(index)}
               style={[styles.pageTab, activePageIndex === index && styles.activePageTab]}
             >
@@ -464,7 +486,7 @@ const EvaluationFormScreen = ({ navigation, route }: any) => {
         </ScrollView>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[eventLayout.frame, styles.content]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         {/* Page Info Editor */}
         <View style={styles.pageInfoCard}>
           <TextInput
@@ -756,41 +778,17 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#020617',
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 24,
-    paddingVertical: 16,
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    backgroundColor: '#0f172a',
-    borderRadius: 20,
+  heading: { flex: 1 },
+  target: { marginBottom: 8 },
+  saveBtn: {
+    minWidth: 56,
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 16,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  saveBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#3b82f6',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    backgroundColor: palette.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
     borderRadius: 12,
-    gap: 8,
   },
   saveBtnText: {
     color: 'white',
@@ -798,16 +796,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   pageTabsContainer: {
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
     borderBottomWidth: 1,
     borderBottomColor: '#1e293b',
   },
   pageTabs: {
-    paddingHorizontal: 24,
+    paddingHorizontal: 20,
     paddingVertical: 12,
     gap: 12,
   },
   pageTab: {
     flexDirection: 'row',
+    minHeight: 48,
     alignItems: 'center',
     backgroundColor: '#0f172a',
     paddingHorizontal: 16,
@@ -818,23 +820,23 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   activePageTab: {
-    backgroundColor: '#1e293b',
-    borderColor: '#3b82f6',
+    backgroundColor: palette.blue.surface,
+    borderColor: palette.blue.edge,
   },
   pageTabText: {
-    color: '#64748b',
+    color: palette.secondary,
     fontSize: 13,
     fontWeight: '600',
   },
   activePageTabText: {
-    color: 'white',
+    color: palette.blue.ink,
   },
   closePageBtn: {
     marginLeft: 4,
   },
   addPageTab: {
-    width: 40,
-    height: 36,
+    width: 48,
+    height: 48,
     backgroundColor: 'rgba(59, 130, 246, 0.1)',
     borderRadius: 10,
     alignItems: 'center',
@@ -843,16 +845,12 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(59, 130, 246, 0.3)',
   },
   content: {
-    paddingHorizontal: 24,
     paddingTop: 16,
   },
   pageInfoCard: {
-    backgroundColor: '#0f172a',
-    borderRadius: 20,
-    padding: 20,
+    ...eventLayout.panel,
+    padding: 16,
     marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#1e293b',
   },
   pageTitleInput: {
     color: 'white',
@@ -866,12 +864,9 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   questionCard: {
-    backgroundColor: '#0f172a',
-    borderRadius: 24,
-    padding: 20,
+    ...eventLayout.panel,
+    padding: 16,
     marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#1e293b',
   },
   cardHeader: {
     flexDirection: 'row',
@@ -891,7 +886,7 @@ const styles = StyleSheet.create({
     borderColor: '#1e293b',
   },
   typeText: {
-    color: '#64748b',
+    color: palette.secondary,
     fontSize: 10,
     fontWeight: 'bold',
     letterSpacing: 1,

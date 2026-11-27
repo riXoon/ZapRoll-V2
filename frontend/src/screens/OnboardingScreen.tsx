@@ -1,196 +1,99 @@
-import React, { useState, useRef } from 'react';
-import {
-  View,
-  Text,
-  FlatList,
-  Image,
-  Dimensions,
-  TouchableOpacity,
-  NativeSyntheticEvent,
-  NativeScrollEvent,
-} from 'react-native';
-import { ChevronRight, Sparkles, Scan, TrendingUp } from 'lucide-react-native';
-import Animated, { 
-  useSharedValue, 
-  useAnimatedStyle, 
-  interpolate,
-  Extrapolation
-} from 'react-native-reanimated';
+﻿import React, { useRef, useState } from 'react';
+import { FlatList, Image, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ArrowRight } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BrandMark, eventLayout } from '../components/eventLayout';
+import { eventPalette as palette } from '../components/eventPalette';
+import { Button } from '../components/ui';
 
-const { width, height } = Dimensions.get('window');
-
-interface OnboardingItem {
-  id: string;
-  title: string;
-  description: string;
-  icon?: React.ReactNode;
-  image?: any;
-}
-
-const ONBOARDING_DATA: OnboardingItem[] = [
+const slides = [
   {
-    id: '1',
-    title: 'Welcome to Synergy 2026',
-    description: 'The premier Research Colloquium and Student Research Conference. Empowering researchers to share their discoveries and ignite innovation.',
+    id: 'welcome',
+    title: 'Welcome to Synergy\u00a02026',
+    description: 'A research colloquium and student research conference for sharing discoveries and ideas.',
     image: require('../../assets/Synergy v2-01.png'),
+    resizeMode: 'contain',
   },
   {
-    id: '2',
-    title: 'Showcase Innovation',
-    description: 'Present your findings to a community of scholars and industry experts. Synergy 2026 is the stage for your intellectual breakthroughs.',
+    id: 'research',
+    title: 'Showcase your research',
+    description: 'Present your findings to fellow researchers and industry experts at Synergy 2026.',
     image: require('../../assets/onboarding_innovation.jpg'),
+    resizeMode: 'cover',
   },
   {
-    id: '3',
-    title: 'Streamlined Attendance',
-    description: 'Experience a hassle-free conference with our digital registration and real-time event updates designed for the modern researcher.',
+    id: 'attendance',
+    title: 'Streamline attendance',
+    description: 'Manage event registration and attendance digitally, from sign-up through check-in.',
     image: require('../../assets/onboarding_attendance.jpg'),
+    resizeMode: 'cover',
   },
-];
+] as const;
 
 const OnboardingScreen = ({ navigation }: any) => {
-  const insets = useSafeAreaInsets();
+  const { top, bottom } = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
+  const pageWidth = Math.min(width, 540);
+  const photoHeight = Math.min(320, height * 0.34, pageWidth - 40);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const scrollX = useSharedValue(0);
-  const flatListRef = useRef<FlatList>(null);
-
-  const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
-    if (viewableItems.length > 0) {
-      setCurrentIndex(viewableItems[0].index);
-    }
-  }).current;
-
-  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    scrollX.value = event.nativeEvent.contentOffset.x;
-  };
-
-  const renderItem = ({ item }: { item: OnboardingItem }) => {
-    const imgSize = width - 80;
-    return (
-      <View style={{ width, paddingHorizontal: 32, alignItems: 'center', justifyContent: 'center' }}>
-        {/* Icon Container with fixed dimensions */}
-        <View style={{ 
-          width: imgSize, 
-          height: imgSize, 
-          borderRadius: 40, 
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginBottom: 40,
-          backgroundColor: '#0f172a', // slate-900
-          borderWidth: 1,
-          borderColor: '#1e293b', // slate-800
-          overflow: 'hidden'
-        }}>
-          {item.image ? (
-            <Image 
-              source={item.image} 
-              style={{ width: '100%', height: '100%', resizeMode: 'contain' }} 
-            />
-          ) : (
-            item.icon
-          )}
-        </View>
-        <View style={{ width: '100%' }}>
-          <Text style={{ fontSize: 32, fontWeight: 'bold', color: 'white', textAlign: 'center', marginBottom: 16 }}>
-            {item.title}
-          </Text>
-          <Text style={{ fontSize: 16, color: '#94a3b8', textAlign: 'center', lineHeight: 24 }}>
-            {item.description}
-          </Text>
-        </View>
-      </View>
-    );
-  };
-
-  const nextStep = () => {
-    if (currentIndex < ONBOARDING_DATA.length - 1) {
-      flatListRef.current?.scrollToIndex({
-        index: currentIndex + 1,
-        animated: true,
-      });
-    } else {
-      navigation.replace('Login');
-    }
-  };
+  const list = useRef<FlatList<(typeof slides)[number]>>(null);
+  const lastSlide = currentIndex === slides.length - 1;
+  const onViewableItemsChanged = useRef<NonNullable<React.ComponentProps<typeof FlatList>['onViewableItemsChanged']>>(
+    ({ viewableItems }) => {
+      const index = viewableItems[0]?.index;
+      if (index != null) setCurrentIndex(index);
+    },
+  ).current;
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60 }).current;
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#020617', paddingTop: insets.top, paddingBottom: insets.bottom }}>
-      <View style={{ flex: 1 }}>
-        <FlatList
-          ref={flatListRef}
-          data={ONBOARDING_DATA}
-          renderItem={renderItem}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          onScroll={handleScroll}
-          onViewableItemsChanged={onViewableItemsChanged}
-          viewabilityConfig={{ viewAreaCoveragePercentThreshold: 50 }}
-          scrollEventThrottle={16}
-          keyExtractor={(item) => item.id}
-        />
-      </View>
-
-      <View style={{ paddingHorizontal: 32, paddingBottom: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        {/* Pagination Dots */}
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          {ONBOARDING_DATA.map((_, index) => {
-            const dotStyle = useAnimatedStyle(() => {
-              const dotWidth = interpolate(
-                scrollX.value,
-                [(index - 1) * width, index * width, (index + 1) * width],
-                [10, 24, 10],
-                Extrapolation.CLAMP
-              );
-              const opacity = interpolate(
-                scrollX.value,
-                [(index - 1) * width, index * width, (index + 1) * width],
-                [0.4, 1, 0.4],
-                Extrapolation.CLAMP
-              );
-              return {
-                width: dotWidth,
-                opacity,
-              };
-            });
-
-            return (
-              <Animated.View
-                key={index}
-                style={[{ height: 10, borderRadius: 5, backgroundColor: '#3b82f6' }, dotStyle]}
-              />
-            );
-          })}
+    <View style={[styles.page, { paddingTop: top, paddingBottom: bottom }]}>
+      <View style={[eventLayout.frame, styles.header]}><BrandMark /></View>
+      <FlatList
+        ref={list}
+        data={slides}
+        style={{ width: pageWidth, alignSelf: 'center' }}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={viewabilityConfig}
+        getItemLayout={(_, index) => ({ length: pageWidth, offset: index * pageWidth, index })}
+        keyExtractor={item => item.id}
+        renderItem={({ item }) => (
+          <ScrollView style={{ width: pageWidth }} contentContainerStyle={styles.slide}>
+            <View style={[styles.photo, { height: photoHeight }]}>
+              <Image source={item.image} resizeMode={item.resizeMode}
+                style={[styles.image, item.resizeMode === 'contain' && styles.logo]} />
+            </View>
+            <Text accessibilityRole="header" style={eventLayout.title}>{item.title}</Text>
+            <Text style={styles.description}>{item.description}</Text>
+          </ScrollView>
+        )}
+      />
+      <View style={[eventLayout.frame, styles.footer]}>
+        <View accessible accessibilityLabel={`Page ${currentIndex + 1} of ${slides.length}`} style={styles.dots}>
+          {slides.map((slide, index) => <View key={slide.id} style={[styles.dot, index === currentIndex && styles.dotActive]} />)}
         </View>
-
-        {/* Next Button */}
-        <TouchableOpacity
-          onPress={nextStep}
-          style={{ 
-            backgroundColor: '#2563eb', 
-            width: 64, 
-            height: 64, 
-            borderRadius: 32, 
-            alignItems: 'center', 
-            justifyContent: 'center',
-            elevation: 5,
-            shadowColor: '#2563eb',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.5,
-            shadowRadius: 10
-          }}
-          activeOpacity={0.8}
-        >
-          {currentIndex === ONBOARDING_DATA.length - 1 ? (
-            <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 12 }}>START</Text>
-          ) : (
-            <ChevronRight color="white" size={32} />
-          )}
-        </TouchableOpacity>
+        <Button title={lastSlide ? 'Get started' : 'Continue'} icon={<ArrowRight color={palette.text} size={18} />}
+          onPress={() => lastSlide ? navigation.replace('Login') : list.current?.scrollToIndex({ index: currentIndex + 1, animated: true })} />
       </View>
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  page: { flex: 1, backgroundColor: palette.canvas },
+  header: { maxWidth: 540, paddingTop: 12, paddingBottom: 12 },
+  slide: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 20, paddingVertical: 12, gap: 12 },
+  photo: { ...eventLayout.panel, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  image: { width: '100%', height: '100%' },
+  logo: { width: '82%', height: '82%' },
+  description: { ...eventLayout.body, fontSize: 16, lineHeight: 24 },
+  footer: { maxWidth: 540, paddingTop: 10, paddingBottom: 14, gap: 14 },
+  dots: { flexDirection: 'row', gap: 6 },
+  dot: { width: 8, height: 6, borderRadius: 3, backgroundColor: '#334155' },
+  dotActive: { width: 24, backgroundColor: palette.blue.ink },
+});
 
 export default OnboardingScreen;

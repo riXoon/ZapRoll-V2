@@ -9,7 +9,7 @@ import { workspaceRequest } from '../../lib/eventWorkspace';
 
 jest.mock('@react-navigation/native', () => ({ useFocusEffect: jest.fn() }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
-jest.mock('lucide-react-native', () => ({ Calendar: () => null, ChevronRight: () => null }));
+jest.mock('lucide-react-native', () => ({ Calendar: () => null, Check: () => null, ChevronRight: () => null, Plus: () => null, Search: () => null }));
 jest.mock('../../lib/eventSelection', () => ({ useEventSelection: jest.fn() }));
 jest.mock('../../lib/eventWorkspace', () => ({
   calendarDay: () => '2026-12-01',
@@ -40,9 +40,32 @@ test.each([[320, 2], [390, 1], [768, 1]])('opens the selected archive at width %
     else expect(tile).toBeTruthy();
     fireEvent.press(screen.getByRole('button', { name: /Synergy School Research Symposium/ }));
     expect(selectEvent).toHaveBeenCalledWith(event);
-    expect(navigate).toHaveBeenCalledWith('Home');
+    expect(navigate).toHaveBeenCalledWith('Analytics');
   } finally {
     dimensions.mockRestore();
+    jest.mocked(useFocusEffect).mockReset();
+  }
+});
+
+test('searches current events without changing the selected event', async () => {
+  jest.mocked(useFocusEffect).mockImplementation(callback => React.useEffect(callback, [callback]));
+  const selectedEvent = {
+    id: 'summit', name: 'CCS Summit', lifecycle: 'active', event_mode: 'scheduled', event_date: '2026-12-02',
+    timezone: 'Asia/Manila', registration_opens_at: null, pre_reg_deadline: null,
+  } as const;
+  const selectEvent = jest.fn();
+  jest.mocked(useEventSelection).mockReturnValue({ selectedEvent, selectEvent });
+  jest.mocked(workspaceRequest).mockResolvedValue([selectedEvent, { ...selectedEvent, id: 'science', name: 'Science Fair' }]);
+  try {
+    render(<EventWorkspaceScreen navigation={{ navigate: jest.fn() }} />);
+    fireEvent.changeText(await screen.findByLabelText('Search events'), 'science');
+    expect(screen.getByText('Science Fair')).toBeTruthy();
+    expect(screen.queryByText('CCS Summit')).toBeNull();
+    expect(selectEvent).not.toHaveBeenCalled();
+    fireEvent.changeText(screen.getByLabelText('Search events'), 'unknown');
+    fireEvent.press(screen.getByRole('button', { name: 'Clear search' }));
+    expect(screen.getByText('CCS Summit')).toBeTruthy();
+  } finally {
     jest.mocked(useFocusEffect).mockReset();
   }
 });

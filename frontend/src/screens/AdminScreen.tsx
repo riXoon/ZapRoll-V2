@@ -1,3 +1,4 @@
+import { eventPalette as palette } from '../components/eventPalette';
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, 
@@ -10,8 +11,8 @@ import {
   KeyboardAvoidingView,
   ActivityIndicator,
   RefreshControl,
+  StyleSheet,
   Switch,
-  Image,
   Modal,
   useWindowDimensions
 } from 'react-native';
@@ -54,6 +55,7 @@ import { API_URL } from '../config/api';
 import { FeedbackModal } from '../components/FeedbackModal';
 import { styles } from '../components/eventSettingsStyles';
 import { SettingsHeading } from '../components/SettingsHeading';
+import { eventLayout } from '../components/eventLayout';
 import ScheduledEventSettings from './ScheduledEventSettings';
 import { type SelectedEvent, useEventSelection } from '../lib/eventSelection';
 import { workspaceRequest } from '../lib/eventWorkspace';
@@ -82,6 +84,25 @@ const SkeletonItem = ({ width, height, borderRadius = 8, style }: any) => {
   );
 };
 
+const scheduledTabs = [
+  { key: 'setup', tone: palette.blue, label: 'Setup', icon: Settings },
+  { key: 'pre-reg', tone: palette.emerald, label: 'Pre-Reg', icon: UserPlus },
+  { key: 'event-day', tone: palette.amber, label: 'Check-in', icon: ClipboardCheck },
+  { key: 'post-event', tone: palette.violet, label: 'Feedback', icon: Star },
+] as const;
+
+const workspaceHeader = StyleSheet.create({
+  header: { ...eventLayout.frame, paddingTop: 12, paddingBottom: 14, gap: 8 },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
+  context: { color: palette.secondary, fontSize: 14, fontWeight: '600' },
+  contextButton: { minHeight: 48, flexShrink: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  tabsFrame: { marginBottom: 16 },
+  tabs: { ...eventLayout.panel, flexDirection: 'row', padding: 4, gap: 4, borderRadius: 14 },
+  tab: { flex: 1, minHeight: 54, alignItems: 'center', justifyContent: 'center', paddingVertical: 7, paddingHorizontal: 2, gap: 4, borderRadius: 10 },
+  tabLabel: { color: palette.secondary, textAlign: 'center', fontSize: 12, fontWeight: '600' },
+  content: { paddingBottom: 26 },
+});
+
 const AdminScreen = ({ navigation, route, selectedEvent }: any) => {
   const scheduled = selectedEvent?.event_mode === 'scheduled';
   const { selectEvent } = useEventSelection();
@@ -93,6 +114,11 @@ const AdminScreen = ({ navigation, route, selectedEvent }: any) => {
   const isExtraSmall = screenWidth < 370;
 
   const [activeTab, setActiveTab] = useState<'setup' | 'pre-reg' | 'event-day' | 'post-event'>(scheduled ? 'setup' : 'pre-reg');
+  const settingsScroll = useRef<ScrollView>(null);
+  const scrollSettingsToTop = React.useCallback(() => settingsScroll.current?.scrollTo({ y: 0, animated: false }), []);
+  useEffect(() => {
+    if (scheduled) scrollSettingsToTop();
+  }, [activeTab, scheduled, route.params?.showParticipants, scrollSettingsToTop]);
   useEffect(() => {
     const section = route.params?.section;
     if (section === 'pre-reg' || section === 'event-day' || section === 'post-event') setActiveTab(section);
@@ -729,61 +755,85 @@ const handleTogglePreRegStatus = async (newValue: boolean) => {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Header */}
-      <View style={[styles.header, isSmallScreen && { paddingHorizontal: 16 }]}>
+      {scheduled ? <View style={workspaceHeader.header}>
+        <View style={workspaceHeader.row}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Choose another event"
+            style={workspaceHeader.contextButton} onPress={() => navigation.navigate('Events')}>
+            <Calendar size={16} color={palette.blue.ink} />
+            <Text style={[workspaceHeader.context, { color: palette.blue.ink, flexShrink: 1 }]}>Change event</Text>
+            <ChevronRight size={14} color={palette.blue.ink} />
+          </TouchableOpacity>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Sign out"
+            style={eventLayout.iconButton} onPress={handleLogout}>
+            <LogOut size={19} color={palette.secondary} />
+          </TouchableOpacity>
+        </View>
+        <Text accessibilityRole="header" style={eventLayout.title}>Event settings</Text>
+        <Text style={workspaceHeader.context} numberOfLines={2}>
+          {selectedEvent.name} · {selectedEvent.lifecycle === 'draft' ? 'Draft' : selectedEvent.lifecycle === 'archived' ? 'Archived' : 'Published'}
+        </Text>
+      </View> : <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-          <Image 
-            source={scheduled ? require('../../assets/icon.png') : require('../../assets/Synergy-01.png')}
-            style={[styles.headerLogo, isSmallScreen && { width: 32, height: 32 }]}
-            resizeMode="contain"
-          />
           <View style={{ flex: 1 }}>
-            <Text style={[styles.headerTitle, isSmallScreen && { fontSize: 20 }]} numberOfLines={1}>Event Settings</Text>
-            <Text style={[styles.headerSubtitle, isSmallScreen && { fontSize: 12 }]} numberOfLines={1}>{selectedEvent?.name || 'System administration'}</Text>
+            <Text accessibilityRole="header" style={styles.headerTitle}>Event settings</Text>
+            <Text style={styles.headerSubtitle} numberOfLines={2}>{selectedEvent?.name || 'System administration'}</Text>
           </View>
         </View>
         <View style={{ flexDirection: 'row', gap: isSmallScreen ? 8 : 12 }}>
           <TouchableOpacity 
-            style={[styles.logoutButton, isSmallScreen && { width: 40, height: 40 }]}
+            accessibilityRole="button" accessibilityLabel="Sign out" style={styles.logoutButton}
             onPress={handleLogout}
           >
-            <LogOut color="#ef4444" size={isSmallScreen ? 18 : 22} />
+            <LogOut color={palette.secondary} size={19} />
           </TouchableOpacity>
         </View>
-      </View>
+      </View>}
 
       {/* Tab Switcher */}
-      <View style={[styles.tabBar, isSmallScreen && { marginHorizontal: 16, padding: 4 }]}>
-        {scheduled && <TouchableOpacity
-          accessibilityRole="tab"
-          accessibilityState={{ selected: activeTab === 'setup' }}
-          onPress={() => { setActiveTab('setup'); navigation.setParams({ section: 'setup', showParticipants: false }); }}
-          style={[styles.tab, activeTab === 'setup' && styles.activeTab, isSmallScreen && { paddingVertical: 8 }]}
-        >
-          <Text style={[styles.tabText, activeTab === 'setup' && styles.activeTabText, isSmallScreen && { fontSize: 11 }]}>Setup</Text>
-        </TouchableOpacity>}
+      <View style={[eventLayout.frame, workspaceHeader.tabsFrame]}>
+      {scheduled ? <View accessibilityRole="tablist" style={workspaceHeader.tabs}>
+        {scheduledTabs.map(({ key, label, tone, icon: Icon }) => {
+          const selected = activeTab === key;
+          return <TouchableOpacity key={key} accessibilityRole="tab" accessibilityState={{ selected }}
+            style={[workspaceHeader.tab, selected && { backgroundColor: tone.surface }]}
+            onPress={() => {
+              setActiveTab(key);
+              navigation.setParams({ section: key, showParticipants: false });
+            }}>
+            <Icon size={17} color={selected ? tone.ink : palette.secondary} />
+            <Text style={[workspaceHeader.tabLabel, selected && { color: tone.ink }]}>{label}</Text>
+          </TouchableOpacity>;
+        })}
+      </View> : <View accessibilityRole="tablist" style={[styles.tabBar, { marginHorizontal: 0, marginBottom: 0 }]}>
         <TouchableOpacity 
+          accessibilityRole="tab" accessibilityState={{ selected: activeTab === 'pre-reg' }}
           onPress={() => { setActiveTab('pre-reg'); navigation.setParams({ section: 'pre-reg', showParticipants: false }); }}
           style={[styles.tab, activeTab === 'pre-reg' && styles.activeTab, isSmallScreen && { paddingVertical: 8 }]}
         >
           <Text style={[styles.tabText, activeTab === 'pre-reg' && styles.activeTabText, isSmallScreen && { fontSize: 11 }]}>Pre-Reg</Text>
         </TouchableOpacity>
         <TouchableOpacity 
+          accessibilityRole="tab" accessibilityState={{ selected: activeTab === 'event-day' }}
           onPress={() => { setActiveTab('event-day'); navigation.setParams({ section: 'event-day', showParticipants: false }); }}
           style={[styles.tab, activeTab === 'event-day' && styles.activeTab, isSmallScreen && { paddingVertical: 8 }]}
         >
           <Text style={[styles.tabText, activeTab === 'event-day' && styles.activeTabText, isSmallScreen && { fontSize: 11 }]}>Registration</Text>
         </TouchableOpacity>
         <TouchableOpacity 
+          accessibilityRole="tab" accessibilityState={{ selected: activeTab === 'post-event' }}
           onPress={() => { setActiveTab('post-event'); navigation.setParams({ section: 'post-event', showParticipants: false }); }}
           style={[styles.tab, activeTab === 'post-event' && styles.activeTab, isSmallScreen && { paddingVertical: 8 }]}
         >
           <Text style={[styles.tabText, activeTab === 'post-event' && styles.activeTabText, isSmallScreen && { fontSize: 11 }]}>Post-Event</Text>
         </TouchableOpacity>
+      </View>}
       </View>
 
       <ScrollView 
+        ref={settingsScroll}
         keyboardShouldPersistTaps="handled"
-        style={[styles.scrollView, isSmallScreen && { paddingHorizontal: 16 }]} 
+        keyboardDismissMode="on-drag"
+        contentContainerStyle={[eventLayout.frame, workspaceHeader.content]}
         showsVerticalScrollIndicator={false}
         refreshControl={scheduled ? undefined :
           <RefreshControl 
@@ -801,7 +851,7 @@ const handleTogglePreRegStatus = async (newValue: boolean) => {
         )}
         {scheduled ? (
           <ScheduledEventSettings navigation={navigation} event={selectedEvent} activeTab={activeTab}
-            showParticipants={route.params?.showParticipants} />
+            showParticipants={route.params?.showParticipants} scrollToTop={scrollSettingsToTop} />
         ) : isArchived ? (
           <View style={styles.card}>
             <Text style={styles.headerTitle}>{eventName} is archived</Text>

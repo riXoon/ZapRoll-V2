@@ -1,18 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, Image, RefreshControl } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, useWindowDimensions } from 'react-native';
 import { reportCache } from '../lib/reportCache';
 import { FeedbackModal } from '../components/FeedbackModal';
 import {
-  Home as HomeIcon,
   Settings,
-  Camera,
-  Bell,
-  Calendar,
+  CalendarDays,
+  ChevronRight,
   Users,
   ArrowRight,
-  Sparkles,
   TrendingUp,
-  Activity,
   Edit3,
   LogOut,
   Star,
@@ -24,8 +20,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import { API_URL } from '../config/api';
-import { type ScheduledDashboard, workspaceRequest } from '../lib/eventWorkspace';
 import { scale, verticalScale, moderateScale } from '../utils/responsive';
+import { BrandMark, EventBanner, eventLayout } from '../components/eventLayout';
+import { eventPalette as palette } from '../components/eventPalette';
 
 const SkeletonItem = ({ width, height, borderRadius = 8, style }: any) => {
   const opacity = useSharedValue(0.3);
@@ -55,9 +52,9 @@ const CACHE_KEY = '@home_dashboard_cache';
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 const HomeScreen = ({ navigation, selectedEvent }: any) => {
-  const scheduled = selectedEvent?.event_mode === 'scheduled';
-  const [scheduledDashboard, setScheduledDashboard] = useState<ScheduledDashboard | null>(null);
   const insets = useSafeAreaInsets();
+  const { width, fontScale } = useWindowDimensions();
+  const stackStats = width < 350 || fontScale > 1.45;
   const isFocused = useIsFocused();
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,13 +99,6 @@ const HomeScreen = ({ navigation, selectedEvent }: any) => {
 
   const fetchDashboardData = async (forceRefresh = false) => {
     try {
-      if (scheduled) {
-        const dashboard = await workspaceRequest<ScheduledDashboard>(`/${selectedEvent.id}/dashboard`);
-        setScheduledDashboard(dashboard);
-        setEvents([selectedEvent]);
-        setStats(previous => ({ ...previous, totalPreReg: dashboard.preRegistered, checkedIn: dashboard.attendance }));
-        return;
-      }
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
       const cacheKey = `${CACHE_KEY}:${session.user.id}:${selectedEvent?.id ?? 'default'}`;
@@ -322,13 +312,6 @@ const HomeScreen = ({ navigation, selectedEvent }: any) => {
     }
   }, [isFocused]);
 
-  const getTimeGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return 'Good Morning';
-    if (hour < 18) return 'Good Afternoon';
-    return 'Good Evening';
-  };
-
   const handleLogout = async () => {
     showAlert(
       'Sign Out',
@@ -343,111 +326,121 @@ const HomeScreen = ({ navigation, selectedEvent }: any) => {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Top Header with Greeting */}
-      <View style={styles.header}>
-        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: scale(16) }}>
-          <Image 
-            source={scheduled ? require('../../assets/icon.png') : require('../../assets/Synergy-01.png')}
-            style={styles.headerLogo}
-            resizeMode="contain"
-          />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.greeting}>{getTimeGreeting()},</Text>
-            <Text style={styles.userName} numberOfLines={1}>{selectedEvent?.name ?? events[0]?.name ?? 'System Admin'}</Text>
-          </View>
-        </View>
-        <View style={{ flexDirection: 'row', gap: scale(12) }}>
-          <TouchableOpacity 
-            style={styles.logoutBtn}
-            onPress={handleLogout}
-          >
-            <LogOut color="#ef4444" size={moderateScale(22)} />
-          </TouchableOpacity>
-        </View>
-      </View>
-
       <ScrollView 
-        style={styles.scrollView} 
+        contentContainerStyle={[eventLayout.frame, styles.content]}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#3b82f6" />
         }
       >
+        <View style={styles.header}>
+          <BrandMark />
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Sign out"
+            style={eventLayout.iconButton} onPress={handleLogout}>
+            <LogOut color={palette.secondary} size={19} />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.bannerSpacing}>
+          <EventBanner>
+            <CalendarDays size={20} color={palette.blue.ink} />
+            <Text accessibilityRole="header" style={eventLayout.title}>{selectedEvent?.name ?? events[0]?.name ?? 'Event overview'}</Text>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Config', { section: 'pre-reg', showParticipants: false })}
+              accessibilityRole="button"
+              style={styles.featuredCard}
+            >
+              <Settings color={palette.text} size={19} />
+              <Text style={styles.featuredTitle}>Event settings</Text>
+              <ArrowRight color={palette.text} size={19} />
+            </TouchableOpacity>
+            {!!selectedEvent && <TouchableOpacity accessibilityRole="button" onPress={() => navigation.navigate('Events')} style={styles.changeEvent}>
+              <Text style={styles.viewAll}>Change event</Text>
+              <ChevronRight color={palette.blue.ink} size={16} />
+            </TouchableOpacity>}
+          </EventBanner>
+        </View>
+
         {loading && events.length === 0 ? (
           <Animated.View entering={FadeInDown.delay(100)}>
-            <View style={styles.statsContainer}>
-              <SkeletonItem width="48%" height={scale(140)} borderRadius={moderateScale(24)} />
-              <SkeletonItem width="48%" height={scale(140)} borderRadius={moderateScale(24)} />
+            <View style={[styles.statsContainer, stackStats && styles.stacked]}>
+              <SkeletonItem width={stackStats ? '100%' : '48%'} height={120} borderRadius={18} />
+              <SkeletonItem width={stackStats ? '100%' : '48%'} height={120} borderRadius={18} />
             </View>
-            <SkeletonItem width="100%" height={verticalScale(180)} borderRadius={moderateScale(24)} style={{ marginBottom: verticalScale(32) }} />
-            <SkeletonItem width="100%" height={verticalScale(90)} borderRadius={moderateScale(24)} style={{ marginBottom: verticalScale(24) }} />
-            <View style={{ marginBottom: verticalScale(24) }}>
-              <SkeletonItem width="30%" height={verticalScale(20)} borderRadius={moderateScale(4)} style={{ marginBottom: verticalScale(16) }} />
-              <View style={styles.menuGrid}>
-                <SkeletonItem width="31%" height={verticalScale(120)} borderRadius={moderateScale(24)} />
-                <SkeletonItem width="31%" height={verticalScale(120)} borderRadius={moderateScale(24)} />
-                <SkeletonItem width="31%" height={verticalScale(120)} borderRadius={moderateScale(24)} />
-              </View>
-            </View>
+            <SkeletonItem width="100%" height={112} borderRadius={18} style={{ marginBottom: 24 }} />
+            <SkeletonItem width="100%" height={180} borderRadius={18} />
           </Animated.View>
         ) : (
           <>
             {/* Quick Stats Grid */}
-            <Animated.View entering={FadeInDown.delay(100)} style={styles.statsContainer}>
-              <View style={[styles.statCard, { backgroundColor: '#064e3b' }]}>
-                <View style={styles.statIconBox}>
-                  <Users color="#34d399" size={moderateScale(28)} />
+            <Text accessibilityRole="header" style={[eventLayout.sectionTitle, styles.statsTitle]}>Event totals</Text>
+            <Animated.View entering={FadeInDown.delay(100)} style={[styles.statsContainer, stackStats && styles.stacked]}>
+              <View style={[eventLayout.panel, styles.statCard]}>
+                <View style={[styles.statIconBox, { backgroundColor: palette.emerald.surface }]}>
+                  <Users color={palette.emerald.ink} size={18} />
                 </View>
                 <View>
-                  <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>{stats.totalPreReg}</Text>
-                  <Text style={styles.statLabel} numberOfLines={1} adjustsFontSizeToFit>Total Pre-Reg</Text>
+                  <Text style={styles.statValue}>{stats.totalPreReg}</Text>
+                  <Text style={styles.statLabel}>Pre-registered</Text>
                 </View>
               </View>
 
-              <View style={[styles.statCard, { backgroundColor: '#451a03' }]}>
-                <View style={styles.statIconBox}>
-                  <UserCheck color="#fbbf24" size={moderateScale(28)} />
+              <View style={[eventLayout.panel, styles.statCard]}>
+                <View style={[styles.statIconBox, { backgroundColor: palette.amber.surface }]}>
+                  <UserCheck color={palette.amber.ink} size={18} />
                 </View>
                 <View>
-                  <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>{stats.checkedIn}</Text>
-                  <Text style={styles.statLabel} numberOfLines={1} adjustsFontSizeToFit>{scheduled ? 'Check-ins' : 'Attendance'}</Text>
+                  <Text style={styles.statValue}>{stats.checkedIn}</Text>
+                  <Text style={styles.statLabel}>Attendance</Text>
                 </View>
               </View>
             </Animated.View>
+
+        {/* Quick Access Menu */}
+        <View style={styles.menuSection}>
+          <Text accessibilityRole="header" style={[eventLayout.sectionTitle, styles.statsTitle]}>Event tools</Text>
+          <View style={styles.menuGrid}>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('ParticipantList', { eventId: selectedEvent?.id })}
+              style={styles.menuBtn} accessibilityRole="button"
+            >
+              <View style={[styles.menuIconBox, { backgroundColor: 'rgba(59, 130, 246, 0.1)' }]}>
+                <Users color="#3b82f6" size={moderateScale(24)} />
+              </View>
+              <Text style={styles.menuBtnText}>Participants</Text>
+              <ChevronRight color={palette.secondary} size={16} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => navigation.navigate('EvaluationForm', { eventId: events[0]?.id })}
+              style={styles.menuBtn} accessibilityRole="button"
+            >
+              <View style={[styles.menuIconBox, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
+                <Edit3 color="#10b981" size={moderateScale(24)} />
+              </View>
+              <Text style={styles.menuBtnText}>Form Builder</Text>
+              <ChevronRight color={palette.secondary} size={16} />
+            </TouchableOpacity>
+
+          </View>
+        </View>
 
         {/* Analytics Overview Section */}
         <Animated.View entering={FadeInDown.delay(200)} style={styles.analyticsSection}>
           <View style={styles.sectionHeaderRow}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <TrendingUp color="#3b82f6" size={moderateScale(20)} />
-              <Text style={styles.sectionTitle}>Analytics Pulse</Text>
+              <Text style={styles.sectionTitle}>Attendance overview</Text>
             </View>
             <TouchableOpacity onPress={() => navigation.navigate('Analytics')}>
-              <Text style={styles.viewAll}>View Details</Text>
+              <Text style={styles.viewAll}>View analytics</Text>
             </TouchableOpacity>
           </View>
 
           <View style={styles.analyticsCard}>
-            {scheduled ? <>
-              {scheduledDashboard?.sessions.slice(0, 3).map(session => {
-                const percent = Math.min(100, Math.round(session.count / session.capacity * 100));
-                return <View key={session.id} style={styles.progressSection}>
-                  <View style={styles.progressHeader}>
-                    <Text style={styles.progressLabel}>{session.title}</Text>
-                    <Text style={styles.progressPercent}>{percent}%</Text>
-                  </View>
-                  <View style={styles.progressBarBg}>
-                    <View style={[styles.progressBarFill, { width: `${percent}%` }]} />
-                  </View>
-                  <Text style={styles.progressSubtext}>{session.venue} · {session.count} / {session.capacity} checked in</Text>
-                </View>;
-              })}
-              {!scheduledDashboard?.sessions.length && <Text style={styles.progressSubtext}>No sessions configured yet.</Text>}
-            </> : <>
-            {/* AM Session Venue Capacity Fill */}
+            {/* Morning session */}
             <View style={styles.progressSection}>
               <View style={styles.progressHeader}>
-                <Text style={styles.progressLabel}>AM Session Venue Capacity Fill</Text>
+                <Text style={styles.progressLabel}>Morning session</Text>
                 <Text style={styles.progressPercent}>{stats.amCapacityFill}%</Text>
               </View>
               <View style={styles.progressBarBg}>
@@ -458,10 +451,10 @@ const HomeScreen = ({ navigation, selectedEvent }: any) => {
 
             <View style={styles.divider} />
 
-            {/* PM Session Venue Capacity Fill */}
+            {/* Afternoon session */}
             <View style={styles.progressSection}>
               <View style={styles.progressHeader}>
-                <Text style={styles.progressLabel}>PM Session Venue Capacity Fill</Text>
+                <Text style={styles.progressLabel}>Afternoon session</Text>
                 <Text style={[styles.progressPercent, { color: '#8b5cf6' }]}>{stats.pmCapacityFill}%</Text>
               </View>
               <View style={styles.progressBarBg}>
@@ -470,39 +463,15 @@ const HomeScreen = ({ navigation, selectedEvent }: any) => {
               <Text style={styles.progressSubtext}>{stats.pmOccupied} / {stats.venueCapacity} slots occupied</Text>
             </View>
 
-            <View style={styles.divider} />
-
-            <View style={styles.attendanceGrid}>
-              <View style={styles.gridCard}>
-                <View style={[styles.gridIconBox, { backgroundColor: 'rgba(16, 185, 129, 0.08)' }]}>
-                  <UserCheck color="#10b981" size={moderateScale(18)} />
-                </View>
-                <View style={styles.gridCardContent}>
-                  <Text style={styles.gridCardVal}>{stats.checkedIn}</Text>
-                  <Text style={styles.gridCardLabel}>Checked-in</Text>
-                </View>
-              </View>
-
-              <View style={styles.gridCard}>
-                <View style={[styles.gridIconBox, { backgroundColor: 'rgba(245, 158, 11, 0.08)' }]}>
-                  <Star color="#f59e0b" size={moderateScale(16)} fill="#f59e0b" />
-                </View>
-                <View style={styles.gridCardContent}>
-                  <Text style={styles.gridCardVal}>{evalStats.avgRating}</Text>
-                  <Text style={styles.gridCardLabel}>Sentiment</Text>
-                </View>
-              </View>
-            </View>
-            </>}
           </View>
         </Animated.View>
 
         {/* Dedicated Evaluation Card */}
-        {!scheduled && <Animated.View entering={FadeInDown.delay(250)} style={[styles.analyticsSection, { marginTop: verticalScale(16) }]}>
+        <Animated.View entering={FadeInDown.delay(250)} style={[styles.analyticsSection, { marginTop: verticalScale(16) }]}>
           <View style={styles.sectionHeaderRow}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Star color="#8b5cf6" size={moderateScale(20)} />
-              <Text style={[styles.sectionTitle, { color: '#8b5cf6' }]}>Evaluation Pulse</Text>
+              <Text style={styles.sectionTitle}>Feedback</Text>
             </View>
             <TouchableOpacity 
               onPress={() => {
@@ -511,7 +480,7 @@ const HomeScreen = ({ navigation, selectedEvent }: any) => {
                 }
               }}
             >
-              <Text style={[styles.viewAll, { color: '#8b5cf6' }]}>View Insights</Text>
+              <Text style={[styles.viewAll, { color: palette.violet.ink }]}>View responses</Text>
             </TouchableOpacity>
           </View>
 
@@ -523,7 +492,7 @@ const HomeScreen = ({ navigation, selectedEvent }: any) => {
                 </View>
                 <View style={styles.gridCardContent}>
                   <Text style={styles.gridCardVal}>{evalStats.amTotal}</Text>
-                  <Text style={styles.gridCardLabel}>AM Evals</Text>
+                  <Text style={styles.gridCardLabel}>AM responses</Text>
                 </View>
               </View>
 
@@ -533,74 +502,15 @@ const HomeScreen = ({ navigation, selectedEvent }: any) => {
                 </View>
                 <View style={styles.gridCardContent}>
                   <Text style={styles.gridCardVal}>{evalStats.pmTotal}</Text>
-                  <Text style={styles.gridCardLabel}>PM Evals</Text>
+                  <Text style={styles.gridCardLabel}>PM responses</Text>
                 </View>
               </View>
             </View>
+            <Text style={styles.progressSubtext}>Average rating {evalStats.avgRating}</Text>
           </View>
-        </Animated.View>}
-
-        {/* Featured Action Card */}
-        <Animated.View entering={FadeInDown.delay(300)}>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('Config', { section: scheduled ? 'setup' : 'pre-reg', showParticipants: false })}
-            style={styles.featuredCard}
-          >
-            <View style={styles.featuredContent}>
-              <View style={styles.featuredIconBox}>
-                <Sparkles color="white" size={moderateScale(24)} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.featuredTitle}>Configure Events</Text>
-                <Text style={styles.featuredSubtitle}>Set up rules, roles and registration windows.</Text>
-              </View>
-              <ArrowRight color="white" size={moderateScale(20)} />
-            </View>
-          </TouchableOpacity>
         </Animated.View>
 
-        {/* Quick Access Menu */}
-        <View style={styles.menuSection}>
-          <Text style={styles.sectionTitle}>Quick Access</Text>
-          <View style={styles.menuGrid}>
-            <TouchableOpacity
-              onPress={() => scheduled
-                ? navigation.navigate('Config', { section: 'pre-reg', showParticipants: true })
-                : navigation.navigate('ParticipantList', { eventId: selectedEvent?.id })}
-              style={styles.menuBtn}
-            >
-              <View style={[styles.menuIconBox, { backgroundColor: 'rgba(59, 130, 246, 0.1)' }]}>
-                <Users color="#3b82f6" size={moderateScale(24)} />
-              </View>
-              <Text style={styles.menuBtnText}>Registry</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => scheduled
-                ? navigation.navigate('Config', { section: 'post-event', showParticipants: false })
-                : navigation.navigate('EvaluationForm', { eventId: events[0]?.id })}
-              style={styles.menuBtn}
-            >
-              <View style={[styles.menuIconBox, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
-                <Edit3 color="#10b981" size={moderateScale(24)} />
-              </View>
-              <Text style={styles.menuBtnText}>{scheduled ? 'Feedback Forms' : 'Form Builder'}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => scheduled ? navigation.navigate('Analytics')
-                : navigation.navigate('EvaluationAnalytics', { eventId: selectedEvent?.id })}
-              style={styles.menuBtn}
-            >
-              <View style={[styles.menuIconBox, { backgroundColor: 'rgba(245, 158, 11, 0.1)' }]}>
-                <BarChart3 color="#f59e0b" size={moderateScale(24)} />
-              </View>
-              <Text style={styles.menuBtnText}>Insights</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={{ height: verticalScale(100) }} />
+        <View style={{ height: verticalScale(24) }} />
           </>
         )}
       </ScrollView>
@@ -620,97 +530,46 @@ const HomeScreen = ({ navigation, selectedEvent }: any) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#020617',
+    backgroundColor: palette.canvas,
   },
+  content: { paddingTop: 12, paddingBottom: 24 },
   header: {
-    paddingHorizontal: scale(24),
-    paddingTop: verticalScale(24),
-    paddingBottom: verticalScale(20),
+    marginBottom: 18,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  greeting: {
-    color: '#94a3b8',
-    fontSize: moderateScale(16),
-    fontWeight: '500',
-  },
-  userName: {
-    color: 'white',
-    fontSize: moderateScale(22),
-    fontWeight: 'bold',
-  },
-  headerLogo: {
-    width: scale(50),
-    height: scale(50),
-  },
-  notificationBtn: {
-    width: scale(50),
-    height: scale(50),
-    borderRadius: moderateScale(25),
-    backgroundColor: '#0f172a',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  logoutBtn: {
-    width: scale(50),
-    height: scale(50),
-    borderRadius: moderateScale(15),
-    backgroundColor: 'rgba(239, 68, 68, 0.05)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.2)',
-  },
-  notifDot: {
-    position: 'absolute',
-    top: verticalScale(14),
-    right: scale(14),
-    width: scale(10),
-    height: scale(10),
-    borderRadius: moderateScale(5),
-    backgroundColor: '#ef4444',
-    borderWidth: 2,
-    borderColor: '#0f172a',
-  },
-  scrollView: {
-    paddingHorizontal: scale(24),
-  },
+  bannerSpacing: { marginBottom: 24 },
+  changeEvent: { minHeight: 48, marginVertical: -8, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 4 },
+  statsTitle: { marginBottom: 12 },
+  stacked: { flexDirection: 'column' },
   statsContainer: {
     flexDirection: 'row',
-    gap: scale(16),
-    marginBottom: verticalScale(32),
+    gap: 10,
+    marginBottom: 24,
   },
   statCard: {
     flex: 1,
-    padding: scale(16),
-    borderRadius: moderateScale(24),
-    justifyContent: 'space-between',
-    minHeight: scale(140),
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    minWidth: 0,
+    padding: 14,
+    gap: 7,
   },
   statIconBox: {
-    width: scale(48),
-    height: scale(48),
-    borderRadius: moderateScale(16),
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    width: 34,
+    height: 34,
+    borderRadius: 9,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: scale(8),
   },
   statValue: {
-    color: 'white',
-    fontSize: moderateScale(32),
-    fontWeight: 'bold',
+    color: palette.text,
+    fontSize: 32,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
   statLabel: {
-    color: 'white',
-    opacity: 0.7,
-    fontSize: moderateScale(14),
-    fontWeight: '600',
+    color: palette.secondary,
+    fontSize: 14,
     marginTop: 4,
   },
   analyticsSection: {
@@ -718,30 +577,25 @@ const styles = StyleSheet.create({
   },
   sectionHeaderRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: verticalScale(16),
     paddingHorizontal: scale(4),
   },
   sectionTitle: {
-    color: '#64748b',
-    fontSize: moderateScale(14),
-    fontWeight: 'bold',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
+    ...eventLayout.sectionTitle,
     marginLeft: scale(8),
   },
   viewAll: {
-    color: '#3b82f6',
-    fontSize: moderateScale(13),
+    color: palette.blue.ink,
+    fontSize: 14,
     fontWeight: '600',
   },
   analyticsCard: {
-    backgroundColor: '#0f172a',
-    borderRadius: moderateScale(24),
-    padding: scale(24),
-    borderWidth: 1,
-    borderColor: '#1e293b',
+    ...eventLayout.panel,
+    padding: 16,
   },
   progressSection: {
     marginBottom: verticalScale(20),
@@ -775,7 +629,7 @@ const styles = StyleSheet.create({
     borderRadius: moderateScale(4),
   },
   progressSubtext: {
-    color: '#64748b',
+    color: palette.secondary,
     fontSize: moderateScale(12),
   },
   divider: {
@@ -822,67 +676,47 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   featuredCard: {
-    backgroundColor: '#2563eb',
-    borderRadius: moderateScale(24),
-    padding: scale(24),
-    marginBottom: verticalScale(32),
-    shadowColor: '#2563eb',
-    shadowOffset: { width: 0, height: verticalScale(8) },
-    shadowOpacity: 0.4,
-    shadowRadius: moderateScale(16),
-    elevation: 8,
-  },
-  featuredContent: {
+    backgroundColor: palette.primary,
+    borderRadius: 12,
+    minHeight: 50,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: scale(16),
-  },
-  featuredIconBox: {
-    width: scale(50),
-    height: scale(50),
-    borderRadius: moderateScale(15),
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    gap: 10,
   },
   featuredTitle: {
-    color: 'white',
-    fontSize: moderateScale(18),
+    flex: 1,
+    color: palette.text,
+    fontSize: 16,
     fontWeight: 'bold',
-    marginBottom: verticalScale(4),
-  },
-  featuredSubtitle: {
-    color: 'rgba(255, 255, 255, 0.8)',
-    fontSize: moderateScale(13),
-    lineHeight: moderateScale(18),
   },
   menuSection: {
     marginBottom: verticalScale(24),
   },
   menuGrid: {
-    flexDirection: 'row',
-    gap: scale(16),
+    ...eventLayout.panel,
+    paddingHorizontal: 14,
+    paddingVertical: 4,
   },
   menuBtn: {
-    flex: 1,
-    backgroundColor: '#0f172a',
-    borderRadius: moderateScale(24),
-    padding: scale(20),
+    minHeight: 54,
+    flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#1e293b',
+    paddingVertical: 6,
+    gap: 12,
   },
   menuIconBox: {
-    width: scale(54),
-    height: scale(54),
-    borderRadius: moderateScale(18),
+    width: 34,
+    height: 34,
+    borderRadius: 9,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: verticalScale(12),
   },
   menuBtnText: {
-    color: 'white',
-    fontSize: moderateScale(14),
+    flex: 1,
+    color: palette.text,
+    fontSize: 15,
     fontWeight: '600',
   },
 });

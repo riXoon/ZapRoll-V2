@@ -1,11 +1,11 @@
+import { eventPalette as palette } from '../components/eventPalette';
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Image } from 'react-native';
-import { FeedbackModal } from '../components/FeedbackModal';
+import { View, Text, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView, StyleSheet } from 'react-native';
 import { Input, Button } from '../components/ui';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import { ArrowRight } from 'lucide-react-native';
+import { BrandMark, EventBanner, eventLayout } from '../components/eventLayout';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
-import { scale, verticalScale, moderateScale } from '../utils/responsive';
 
 const LoginScreen = ({ navigation }: any) => {
   const insets = useSafeAreaInsets();
@@ -13,40 +13,22 @@ const LoginScreen = ({ navigation }: any) => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Feedback Modal State
-  const [feedbackVisible, setFeedbackVisible] = useState(false);
-  const [feedbackConfig, setFeedbackConfig] = useState<{
-    title: string;
-    message: string;
-    type: 'success' | 'error' | 'info' | 'confirm';
-    onConfirm?: () => void;
-  }>({
-    title: '',
-    message: '',
-    type: 'info'
-  });
-
-  const showAlert = (title: string, message: string, type: 'success' | 'error' | 'info' | 'confirm' = 'info', onConfirm?: () => void) => {
-    setFeedbackConfig({ title, message, type, onConfirm });
-    setFeedbackVisible(true);
-  };
+  const [error, setError] = useState('');
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      showAlert('Error', 'Please fill in all fields', 'error');
+    if (loading) return;
+    if (!email.trim() || !password) {
+      setError('Enter your email and password to sign in.');
       return;
     }
-
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error) {
-      showAlert('Login Error', error.message, 'error');
-      setLoading(false);
-    } else {
+    setError('');
+    try {
+      const result = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      if (result.error) setError(result.error.message);
+    } catch {
+      setError('Could not reach ZapRoll. Check your connection and try again.');
+    } finally {
       setLoading(false);
     }
   };
@@ -58,26 +40,20 @@ const LoginScreen = ({ navigation }: any) => {
         style={{ flex: 1 }}
       >
         <ScrollView 
-          contentContainerStyle={{ flexGrow: 1, paddingHorizontal: scale(32), paddingTop: verticalScale(48) }}
+          keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.page, { paddingBottom: insets.bottom + 20 }]}
           showsVerticalScrollIndicator={false}
         >
-          <Animated.View entering={FadeInDown.delay(200).duration(800)}>
-            <View style={styles.iconContainer}>
-              <Image 
-                source={require('../../assets/Synergy-01.png')} 
-                style={styles.logo}
-                resizeMode="contain"
-              />
-            </View>
-            <Text style={styles.title}>Welcome Back</Text>
-            <Text style={styles.subtitle}>
-              Sign in to continue your synergy journey
+          <EventBanner>
+            <BrandMark />
+            <Text accessibilityRole="header" style={eventLayout.title}>Sign in</Text>
+            <Text style={eventLayout.body}>
+              Manage registration and attendance for your events.
             </Text>
-          </Animated.View>
+          </EventBanner>
 
-          <Animated.View entering={FadeInDown.delay(400).duration(800)}>
+          <View>
             <Input 
-              label="Email Address"
+              label="Email address" keyboardType="email-address" autoCapitalize="none"
               placeholder="name@school.edu"
               value={email}
               onChangeText={setEmail}
@@ -90,34 +66,21 @@ const LoginScreen = ({ navigation }: any) => {
               secureTextEntry
             />
             
-            <TouchableOpacity style={styles.forgotPass}>
-              <Text style={styles.linkText}>Forgot Password?</Text>
-            </TouchableOpacity>
-
+            {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
             <Button 
               title={loading ? "Signing In..." : "Sign In"} 
               onPress={handleLogin} 
               disabled={loading}
+              icon={!loading && <ArrowRight size={18} color={palette.text} />}
             />
 
-            <View style={styles.footer}>
-              <Text style={styles.footerText}>Don't have an account? </Text>
-              <TouchableOpacity onPress={() => navigation.navigate('Register')}>
-                <Text style={styles.footerLink}>Sign Up</Text>
-              </TouchableOpacity>
-            </View>
-          </Animated.View>
+            <TouchableOpacity accessibilityRole="button" style={styles.footer} onPress={() => navigation.navigate('Register')}>
+              <Text style={styles.footerText}>New to ZapRoll? <Text style={styles.footerLink}>Create an account</Text></Text>
+            </TouchableOpacity>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
 
-      <FeedbackModal
-        visible={feedbackVisible}
-        title={feedbackConfig.title}
-        message={feedbackConfig.message}
-        type={feedbackConfig.type}
-        onConfirm={feedbackConfig.onConfirm}
-        onClose={() => setFeedbackVisible(false)}
-      />
     </View>
   );
 };
@@ -125,58 +88,22 @@ const LoginScreen = ({ navigation }: any) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#020617', // slate-950
+    backgroundColor: palette.canvas,
   },
-  iconContainer: {
-    width: scale(80),
-    height: scale(80),
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
-    borderRadius: moderateScale(20),
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: verticalScale(32),
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
-  },
-  logo: {
-    width: '80%',
-    height: '80%',
-  },
-  title: {
-    fontSize: moderateScale(36),
-    fontWeight: 'bold',
-    color: 'white',
-    marginBottom: verticalScale(8),
-  },
-  subtitle: {
-    fontSize: moderateScale(18),
-    color: '#94a3b8',
-    marginBottom: verticalScale(40),
-  },
-  forgotPass: {
-    alignItems: 'flex-end',
-    marginBottom: verticalScale(32),
-  },
-  linkText: {
-    color: '#3b82f6',
-    fontSize: moderateScale(14),
-    fontWeight: '500',
-  },
-
+  page: { flexGrow: 1, width: '100%', maxWidth: 500, alignSelf: 'center', padding: 20, justifyContent: 'center', gap: 24 },
+  error: { color: '#fecaca', marginBottom: 16, fontSize: 15 },
   footer: {
-    flexDirection: 'row',
+    minHeight: 48,
     justifyContent: 'center',
-    marginTop: verticalScale(48),
-    marginBottom: verticalScale(32),
+    marginTop: 12,
   },
   footerText: {
-    color: '#94a3b8',
-    fontSize: moderateScale(14),
+    color: palette.secondary,
+    fontSize: 14,
+    textAlign: 'center',
   },
   footerLink: {
-    color: '#3b82f6',
-    fontSize: moderateScale(14),
+    color: palette.blue.ink,
     fontWeight: 'bold',
   },
 });

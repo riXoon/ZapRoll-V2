@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Dimensions, Modal, ActivityIndicator, RefreshControl, Image } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Modal, ActivityIndicator, RefreshControl } from 'react-native';
+import { eventLayout } from '../components/eventLayout';
+import { eventPalette as palette } from '../components/eventPalette';
 import { FeedbackModal } from '../components/FeedbackModal';
 import { 
   BarChart3, 
@@ -23,7 +25,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useWindowDimensions } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { API_URL } from '../config/api';
-import { type ScheduledDashboard, workspaceRequest } from '../lib/eventWorkspace';
 import { useIsFocused } from '@react-navigation/native';
 
 const SkeletonItem = ({ width, height, borderRadius = 8, style }: any) => {
@@ -51,8 +52,6 @@ const SkeletonItem = ({ width, height, borderRadius = 8, style }: any) => {
 };
 
 const AnalyticsScreen = ({ navigation, selectedEvent }: any) => {
-  const scheduled = selectedEvent?.event_mode === 'scheduled';
-  const [dashboard, setDashboard] = useState<ScheduledDashboard | null>(null);
   const { width } = useWindowDimensions();
   const isSmallScreen = width < 420;
   const isExtraSmall = width < 370;
@@ -89,16 +88,6 @@ const AnalyticsScreen = ({ navigation, selectedEvent }: any) => {
 
   const fetchAnalyticsData = async () => {
     try {
-      if (scheduled) {
-        const data = await workspaceRequest<ScheduledDashboard>(`/${selectedEvent.id}/dashboard`);
-        setDashboard(data);
-        setRecentScans(data.recent.map(scan => ({
-          ...scan, status: 'In', time: new Date(scan.checkedInAt).toLocaleTimeString([], {
-            timeZone: selectedEvent.timezone, hour: 'numeric', minute: '2-digit',
-          }),
-        })));
-        return;
-      }
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
@@ -303,28 +292,30 @@ const AnalyticsScreen = ({ navigation, selectedEvent }: any) => {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Header */}
-      <View style={[styles.header, isSmallScreen && { paddingHorizontal: 16, paddingTop: 16 }]}>
+      <View style={[eventLayout.frame, styles.header]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
           <TouchableOpacity 
             onPress={() => navigation.goBack()} 
-            style={{ marginRight: 8, padding: 4 }}
+            style={[eventLayout.iconButton, { marginRight: 10 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
           >
             <ChevronLeft color="white" size={24} />
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
-            <Text style={[styles.headerTitle, isSmallScreen && { fontSize: 22 }]} numberOfLines={1}>Analytics</Text>
-            <Text style={[styles.headerSubtitle, isSmallScreen && { fontSize: 12 }]}>{selectedEvent?.name ?? event?.name ?? 'Drill-down Reports'}</Text>
+            <Text accessibilityRole="header" style={eventLayout.title}>Analytics</Text>
+            <Text style={eventLayout.body} numberOfLines={2}>{selectedEvent?.name ?? event?.name ?? 'Drill-down Reports'}</Text>
           </View>
         </View>
         <View style={[styles.headerActions, isExtraSmall && { gap: 8 }]}>
-          <TouchableOpacity onPress={handleLogout} style={[styles.logoutBtn, isSmallScreen && { width: 36, height: 36 }]}>
-            <LogOut color="#ef4444" size={isSmallScreen ? 18 : 20} />
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Sign out" onPress={handleLogout} style={eventLayout.iconButton}>
+            <LogOut color={palette.secondary} size={19} />
           </TouchableOpacity>
         </View>
       </View>
 
       <ScrollView 
-        style={styles.scrollView} 
+        contentContainerStyle={[eventLayout.frame, styles.content]}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#3b82f6" />
@@ -350,20 +341,21 @@ const AnalyticsScreen = ({ navigation, selectedEvent }: any) => {
         ) : (
           <>
             {/* Category Switcher */}
-        {!scheduled && <>
-        <View style={[styles.categoryBar, isSmallScreen && { marginBottom: 16 }]}>
+        <View accessibilityRole="tablist" style={styles.categoryBar}>
           <TouchableOpacity 
+            accessibilityRole="tab" accessibilityState={{ selected: activeCategory === 'Student' }}
             onPress={() => setActiveCategory('Student')}
             style={[styles.catTab, activeCategory === 'Student' && styles.activeCatTab]}
           >
-            <GraduationCap color={activeCategory === 'Student' ? 'white' : '#64748b'} size={isSmallScreen ? 16 : 18} />
+            <GraduationCap color={activeCategory === 'Student' ? palette.blue.ink : palette.secondary} size={18} />
             <Text style={[styles.catTabText, activeCategory === 'Student' && styles.activeCatTabText, isSmallScreen && { fontSize: 12 }]}>Students</Text>
           </TouchableOpacity>
           <TouchableOpacity 
+            accessibilityRole="tab" accessibilityState={{ selected: activeCategory === 'Employee' }}
             onPress={() => setActiveCategory('Employee')}
             style={[styles.catTab, activeCategory === 'Employee' && styles.activeCatTab]}
           >
-            <Briefcase color={activeCategory === 'Employee' ? 'white' : '#64748b'} size={isSmallScreen ? 16 : 18} />
+            <Briefcase color={activeCategory === 'Employee' ? palette.blue.ink : palette.secondary} size={18} />
             <Text style={[styles.catTabText, activeCategory === 'Employee' && styles.activeCatTabText, isSmallScreen && { fontSize: 12 }]}>Employees</Text>
           </TouchableOpacity>
         </View>
@@ -392,36 +384,31 @@ const AnalyticsScreen = ({ navigation, selectedEvent }: any) => {
             ))
           )}
         </ScrollView>
-        </>}
 
         {/* Breakdown Chart */}
         <Animated.View layout={Layout.springify()} entering={FadeInDown.delay(100)} style={[styles.chartCard, isSmallScreen && { padding: 16 }]}>
           <View style={styles.chartHeader}>
             <Text style={[styles.chartTitle, isSmallScreen && { fontSize: 16 }]}>
-              {scheduled ? 'Participant Breakdown' : `${activeCategory} ${selectedYear === '4th Year' ? 'Roles' : 'Breakdown'}`}
+              {`${activeCategory} ${selectedYear === '4th Year' ? 'Roles' : 'Breakdown'}`}
             </Text>
             <Text style={styles.chartSubTitle}>
-              by {scheduled ? 'Event Role' : activeCategory === 'Student'
+              by {activeCategory === 'Student'
                 ? (selectedYear === '4th Year' ? 'Student Role' : 'Year Level') 
                 : 'Department'}
             </Text>
           </View>
           
           <View style={styles.barChartContainer}>
-            {scheduled && !dashboard?.roles.length && <Text style={styles.chartSubTitle}>No roles configured yet.</Text>}
-            {(scheduled ? dashboard?.roles.map(role => ({
-              label: role.name, count: role.count, color: '#3b82f6',
-              val: dashboard.participants ? Math.min(100, Math.round(role.count / dashboard.participants * 100)) : 0,
-            })) ?? [] : activeCategory === 'Student' ? studentBreakdown : employeeBreakdown).map((item, idx) => (
+            {(activeCategory === 'Student' ? studentBreakdown : employeeBreakdown).map((item, idx) => (
               <View key={item.label} style={styles.chartRow}>
-                <Text style={[styles.barLabel, isSmallScreen && { width: 110, fontSize: 10 }]} numberOfLines={1}>{item.label}</Text>
+                <Text style={styles.barLabel}>{item.label}</Text>
                 <View style={styles.barBg}>
                   <Animated.View 
                     entering={FadeInRight.delay(200 + idx * 50)}
                     style={[styles.barFill, { width: `${item.val}%`, backgroundColor: item.color }]} 
                   />
                 </View>
-                <Text style={[styles.barValue, isSmallScreen && { width: 65, fontSize: 10 }]}>
+                <Text style={styles.barValue}>
                   {item.val}% ({item.count})
                 </Text>
               </View>
@@ -433,63 +420,40 @@ const AnalyticsScreen = ({ navigation, selectedEvent }: any) => {
         <View style={[styles.summaryRow, isExtraSmall && { flexDirection: 'column' }]}>
           <View style={[styles.summaryCard, isSmallScreen && { padding: 16 }]}>
             <Text style={[styles.summaryLabel, isSmallScreen && { fontSize: 11 }]}>
-              {scheduled ? 'Registrations' : activeCategory === 'Student' && selectedYear !== 'All' ? selectedYear :
+              {activeCategory === 'Student' && selectedYear !== 'All' ? selectedYear :
                activeCategory === 'Employee' && selectedDept !== 'All' ? selectedDept : 
                `Total ${activeCategory}s`}
             </Text>
-            <Text style={[styles.summaryValue, isSmallScreen && { fontSize: 24 }]}>{scheduled ? dashboard?.participants ?? 0 : filteredStats.total}</Text>
+            <Text style={[styles.summaryValue, isSmallScreen && { fontSize: 24 }]}>{filteredStats.total}</Text>
             <View style={styles.trendUp}>
               <Activity color="#3b82f6" size={12} />
-              <Text style={[styles.trendText, { color: '#3b82f6' }]}>{scheduled ? 'All Roles' : 'Filtered View'}</Text>
+              <Text style={[styles.trendText, { color: '#3b82f6' }]}>Filtered view</Text>
             </View>
           </View>
           <View style={[styles.summaryCard, isSmallScreen && { padding: 16 }]}>
-            <Text style={[styles.summaryLabel, isSmallScreen && { fontSize: 11 }]}>{scheduled ? 'Check-ins' : 'Participation'}</Text>
-            <Text style={[styles.summaryValue, isSmallScreen && { fontSize: 24 }]}>{scheduled ? dashboard?.attendance ?? 0 : `${filteredStats.participation}%`}</Text>
+            <Text style={[styles.summaryLabel, isSmallScreen && { fontSize: 11 }]}>Participation</Text>
+            <Text style={[styles.summaryValue, isSmallScreen && { fontSize: 24 }]}>{`${filteredStats.participation}%`}</Text>
             <View style={styles.trendUp}>
               <ArrowUpRight color="#10b981" size={12} />
-              <Text style={styles.trendText}>{scheduled ? 'All Sessions' : 'In-Group'}</Text>
+              <Text style={styles.trendText}>Filtered view</Text>
             </View>
           </View>
         </View>
 
-        {scheduled && <Animated.View entering={FadeInDown.delay(125)} style={styles.chartCard}>
-          <View style={styles.chartHeader}>
-            <Text style={styles.chartTitle}>Attendance by Session</Text>
-            <Text style={styles.chartSubTitle}>Check-ins and capacity</Text>
-          </View>
-          {!dashboard?.sessions.length && <Text style={styles.chartSubTitle}>No sessions configured yet.</Text>}
-          {dashboard?.sessions.map(session => {
-            const fill = Math.min(100, Math.round(session.count / session.capacity * 100));
-            const day = new Date(session.startsAt).toLocaleDateString([], {
-              timeZone: selectedEvent.timezone, month: 'short', day: 'numeric',
-            });
-            return <View key={session.id} style={{ marginBottom: 12 }}>
-              <Text style={styles.chartSubTitle}>{session.title} · {day} · {session.venue}</Text>
-              <View style={styles.chartRow}>
-                <View style={styles.barBg}><View style={[styles.barFill, { width: `${fill}%`, backgroundColor: '#3b82f6' }]} /></View>
-                <Text style={styles.barValue}>{session.count}/{session.capacity}</Text>
-              </View>
-            </View>;
-          })}
-        </Animated.View>}
-        
         {/* Evaluation Insights Card */}
         <Animated.View entering={FadeInDown.delay(150)} style={styles.evaluationCard}>
           <View style={styles.evalIconContainer}>
             <Activity color="#8b5cf6" size={24} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.evalTitle}>{scheduled ? 'Session Feedback' : 'Evaluation Insights'}</Text>
-            <Text style={styles.evalSub}>{scheduled ? `${dashboard?.feedback ?? 0} responses` : 'Sentiment analysis & feedback summary'}</Text>
+            <Text style={styles.evalTitle}>Evaluation insights</Text>
+            <Text style={styles.evalSub}>Sentiment analysis and feedback summary</Text>
           </View>
           <TouchableOpacity 
-            onPress={() => scheduled
-              ? navigation.navigate('Config', { section: 'post-event', showParticipants: false })
-              : navigation.navigate('EvaluationAnalytics', { eventId: selectedEvent?.id })}
+            onPress={() => navigation.navigate('EvaluationAnalytics', { eventId: selectedEvent?.id })}
             style={styles.evalGoBtn}
           >
-            <Text style={styles.evalGoText}>Explore</Text>
+            <Text style={styles.evalGoText}>View feedback</Text>
             <ChevronRight color="white" size={16} />
           </TouchableOpacity>
         </Animated.View>
@@ -497,11 +461,9 @@ const AnalyticsScreen = ({ navigation, selectedEvent }: any) => {
         {/* Live Feed Section */}
         <Animated.View entering={FadeInDown.delay(200)} style={styles.feedSection}>
           <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>Live Activity</Text>
+            <Text style={styles.sectionTitle}>Recent check-ins</Text>
             <TouchableOpacity 
-              onPress={() => scheduled
-                ? navigation.navigate('Config', { section: 'pre-reg', showParticipants: true })
-                : navigation.navigate('ParticipantList', { eventId: selectedEvent?.id })}
+              onPress={() => navigation.navigate('ParticipantList', { eventId: selectedEvent?.id })}
               style={styles.viewDetailsBtn}
             >
               <Text style={styles.viewAll}>View Full List</Text>
@@ -552,26 +514,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#020617',
   },
   header: {
-    paddingHorizontal: 24,
-    paddingTop: 24,
-    paddingBottom: 20,
+    paddingTop: 14,
+    paddingBottom: 18,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-  },
-  headerLogo: {
-    width: 40,
-    height: 40,
-    marginRight: 12,
-  },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: '#64748b',
+    gap: 8,
   },
   headerActions: {
     flexDirection: 'row',
@@ -587,24 +535,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#1e293b',
   },
-  logoutBtn: {
-    width: 44,
-    height: 44,
-    backgroundColor: 'rgba(239, 68, 68, 0.05)',
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.2)',
-  },
-  scrollView: {
-    paddingHorizontal: 24,
-  },
+  content: { paddingBottom: 24 },
   categoryBar: {
     flexDirection: 'row',
     backgroundColor: '#0f172a',
-    padding: 6,
-    borderRadius: 16,
+    padding: 4,
+    borderRadius: 14,
     marginBottom: 20,
     borderWidth: 1,
     borderColor: '#1e293b',
@@ -614,29 +550,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 12,
+    minHeight: 48,
+    paddingVertical: 8,
+    borderRadius: 10,
     gap: 8,
   },
   activeCatTab: {
-    backgroundColor: '#3b82f6',
+    backgroundColor: palette.blue.surface,
   },
   catTabText: {
-    color: '#64748b',
+    color: palette.secondary,
     fontWeight: 'bold',
     fontSize: 14,
   },
   activeCatTabText: {
-    color: 'white',
+    color: palette.blue.ink,
   },
   chipScroll: {
     marginBottom: 24,
   },
   chip: {
+    minHeight: 48,
+    justifyContent: 'center',
     paddingHorizontal: 16,
     paddingVertical: 8,
     backgroundColor: '#0f172a',
-    borderRadius: 20,
+    borderRadius: 12,
     marginRight: 10,
     borderWidth: 1,
     borderColor: '#1e293b',
@@ -646,19 +585,16 @@ const styles = StyleSheet.create({
     borderColor: '#3b82f6',
   },
   chipText: {
-    color: '#64748b',
+    color: palette.secondary,
     fontSize: 13,
     fontWeight: '600',
   },
   activeChipText: {
-    color: '#3b82f6',
+    color: palette.blue.ink,
   },
   chartCard: {
-    backgroundColor: '#0f172a',
-    borderRadius: 24,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: '#1e293b',
+    ...eventLayout.panel,
+    padding: 18,
     marginBottom: 24,
   },
   chartHeader: {
@@ -670,7 +606,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   chartSubTitle: {
-    color: '#64748b',
+    color: palette.secondary,
     fontSize: 12,
     marginTop: 4,
   },
@@ -683,13 +619,14 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   barLabel: {
-    color: '#94a3b8',
-    fontSize: 12,
-    width: 140, // Increased to accommodate longer role names
+    color: palette.secondary,
+    fontSize: 13,
+    width: '38%',
     fontWeight: '500',
   },
   barBg: {
     flex: 1,
+    minWidth: 15,
     height: 8,
     backgroundColor: '#020617',
     borderRadius: 4,
@@ -702,7 +639,7 @@ const styles = StyleSheet.create({
   barValue: {
     color: 'white',
     fontSize: 12,
-    width: 75,
+    width: '28%',
     fontWeight: 'bold',
     textAlign: 'right',
   },
@@ -713,15 +650,12 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     flex: 1,
-    backgroundColor: '#0f172a',
-    borderRadius: 24,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#1e293b',
+    ...eventLayout.panel,
+    padding: 18,
   },
   summaryLabel: {
-    color: '#64748b',
-    fontSize: 12,
+    color: palette.secondary,
+    fontSize: 14,
     fontWeight: 'bold',
     marginBottom: 12,
   },
@@ -742,11 +676,8 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   evaluationCard: {
-    backgroundColor: '#0f172a',
-    borderRadius: 24,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#1e293b',
+    ...eventLayout.panel,
+    padding: 18,
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 32,
@@ -796,11 +727,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   sectionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#94a3b8',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
+    ...eventLayout.sectionTitle,
   },
   viewDetailsBtn: {
     flexDirection: 'row',
@@ -864,11 +791,8 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   exportCta: {
-    backgroundColor: '#0f172a',
-    borderRadius: 24,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: '#1e293b',
+    ...eventLayout.panel,
+    padding: 18,
     flexDirection: 'column',
     gap: 20,
   },
@@ -886,7 +810,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   mainExportBtn: {
-    backgroundColor: '#3b82f6',
+    backgroundColor: palette.primary,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

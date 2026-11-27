@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Image } from 'react-native';
+import { View, Text, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView, StyleSheet } from 'react-native';
 import { FeedbackModal } from '../components/FeedbackModal';
 import { Input, Button } from '../components/ui';
 import { ArrowLeft } from 'lucide-react-native';
@@ -7,6 +7,8 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { scale, verticalScale, moderateScale } from '../utils/responsive';
+import { BrandMark, eventLayout } from '../components/eventLayout';
+import { eventPalette as palette } from '../components/eventPalette';
 
 const RegisterScreen = ({ navigation }: any) => {
   const insets = useSafeAreaInsets();
@@ -152,28 +154,19 @@ const RegisterScreen = ({ navigation }: any) => {
         style={{ flex: 1 }}
       >
         <ScrollView 
-          contentContainerStyle={{ flexGrow: 1, paddingHorizontal: scale(32), paddingTop: verticalScale(24) }}
+          contentContainerStyle={[styles.page, { paddingBottom: insets.bottom + 20 }]}
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
           <Animated.View entering={FadeInDown.delay(200).duration(800)}>
-            <TouchableOpacity 
-              onPress={() => navigation.goBack()}
-              style={styles.backButton}
-            >
-              <ArrowLeft color="white" size={moderateScale(20)} />
-            </TouchableOpacity>
-
-            <View style={styles.iconContainer}>
-              <Image 
-                source={require('../../assets/Synergy-01.png')} 
-                style={styles.logo}
-                resizeMode="contain"
-              />
+            <View style={styles.header}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back"
+                onPress={() => navigation.goBack()} style={eventLayout.iconButton}>
+                <ArrowLeft color={palette.text} size={20} />
+              </TouchableOpacity>
+              <BrandMark />
             </View>
-            <Text style={styles.title}>Create Account</Text>
-            <Text style={styles.subtitle}>
-              Join the synergy community and start managing events with ease.
-            </Text>
+            <Text accessibilityRole="header" style={eventLayout.title}>Create an account</Text>
           </Animated.View>
 
           <Animated.View entering={FadeInDown.delay(400).duration(800)}>
@@ -191,6 +184,8 @@ const RegisterScreen = ({ navigation }: any) => {
             />
             <Input 
               label="Email Address"
+              keyboardType="email-address"
+              autoCapitalize="none"
               placeholder="name@school.edu"
               value={email}
               onChangeText={setEmail}
@@ -264,12 +259,9 @@ const RegisterScreen = ({ navigation }: any) => {
               disabled={loading}
             />
 
-            <View style={styles.footer}>
-              <Text style={styles.footerText}>Already have an account? </Text>
-              <TouchableOpacity onPress={() => navigation.navigate('Login')}>
-                <Text style={styles.footerLink}>Sign In</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity accessibilityRole="button" style={styles.footer} onPress={() => navigation.navigate('Login')}>
+              <Text style={styles.footerText}>Already have an account? <Text style={styles.footerLink}>Sign in</Text></Text>
+            </TouchableOpacity>
           </Animated.View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -289,46 +281,14 @@ const RegisterScreen = ({ navigation }: any) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#020617', // slate-950
+    backgroundColor: palette.canvas,
   },
-  backButton: {
-    width: scale(44),
-    height: scale(44),
-    backgroundColor: '#0f172a',
-    borderRadius: moderateScale(12),
+  page: { width: '100%', maxWidth: 500, alignSelf: 'center', padding: 20, gap: 24 },
+  header: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: verticalScale(32),
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  iconContainer: {
-    width: scale(80),
-    height: scale(80),
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
-    borderRadius: moderateScale(20),
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: verticalScale(24),
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
-  },
-  logo: {
-    width: '80%',
-    height: '80%',
-  },
-  title: {
-    fontSize: moderateScale(32),
-    fontWeight: 'bold',
-    color: 'white',
-    marginBottom: verticalScale(8),
-  },
-  subtitle: {
-    fontSize: moderateScale(16),
-    color: '#94a3b8',
-    marginBottom: verticalScale(32),
-    lineHeight: moderateScale(24),
+    gap: 12,
+    marginBottom: 20,
   },
   termsContainer: {
     flexDirection: 'row',
@@ -346,17 +306,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   footer: {
-    flexDirection: 'row',
+    minHeight: 48,
     justifyContent: 'center',
-    marginTop: verticalScale(40),
-    marginBottom: verticalScale(40),
+    marginTop: 12,
   },
   footerText: {
-    color: '#94a3b8',
+    color: palette.secondary,
+    textAlign: 'center',
     fontSize: moderateScale(14),
   },
   footerLink: {
-    color: '#3b82f6',
+    color: palette.blue.ink,
     fontSize: moderateScale(14),
     fontWeight: 'bold',
   },

@@ -25,6 +25,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { API_URL } from '../config/api';
 import { useIsFocused } from '@react-navigation/native';
+import { eventLayout } from '../components/eventLayout';
+import { eventPalette as palette } from '../components/eventPalette';
 
 const CACHE_KEY = '@participant_registry_cache';
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -663,39 +665,32 @@ const ParticipantListScreen = ({ navigation, route }: any) => {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Header */}
-      <View style={[styles.header, isSmallScreen && { paddingHorizontal: 16, paddingTop: 16 }]}>
+      <View style={[eventLayout.frame, eventLayout.detailHeader, styles.header]}>
         <View style={styles.headerLeft}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={[styles.backButton, isSmallScreen && { width: 32, height: 32, marginRight: 10 }]}>
-            <ArrowLeft color="white" size={isSmallScreen ? 16 : 18} />
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back"
+            onPress={() => navigation.goBack()} style={eventLayout.iconButton}>
+            <ArrowLeft color={palette.text} size={20} />
           </TouchableOpacity>
-          <View style={{ flexShrink: 1 }}>
-            <Text style={[styles.headerTitle, isSmallScreen && { fontSize: 16 }]} numberOfLines={1}>Participant Registry</Text>
-          </View>
+          <Text accessibilityRole="header" style={eventLayout.detailTitle}>Participants</Text>
         </View>
         <View style={styles.headerRight}>
           <TouchableOpacity 
+            accessibilityRole="button" accessibilityLabel="Export Excel" accessibilityState={{ disabled: isExporting }}
             onPress={() => handleExport('Excel')} 
             disabled={isExporting}
-            style={[
-              styles.exportTab, 
-              isSmallScreen && { paddingHorizontal: 8, paddingVertical: 6, gap: 6 },
-              { backgroundColor: 'rgba(16, 185, 129, 0.1)', borderColor: 'rgba(16, 185, 129, 0.2)' }
-            ]}
+            style={styles.exportTab}
           >
-            <FileSpreadsheet color="#10b981" size={isSmallScreen ? 12 : 14} />
-            <Text style={[styles.exportTabText, isSmallScreen && { fontSize: 10 }, { color: '#10b981' }]}>Excel</Text>
+            <FileSpreadsheet color={palette.emerald.ink} size={15} />
+            <Text style={[styles.exportTabText, { color: palette.emerald.ink }]}>Excel</Text>
           </TouchableOpacity>
           <TouchableOpacity 
+            accessibilityRole="button" accessibilityLabel="Export PDF" accessibilityState={{ disabled: isExporting }}
             onPress={() => handleExport('PDF')} 
             disabled={isExporting}
-            style={[
-              styles.exportTab, 
-              isSmallScreen && { paddingHorizontal: 8, paddingVertical: 6, gap: 6 },
-              { backgroundColor: 'rgba(129, 140, 248, 0.1)', borderColor: 'rgba(129, 140, 248, 0.2)' }
-            ]}
+            style={styles.exportTab}
           >
-            <FileDown color="#818cf8" size={isSmallScreen ? 12 : 14} />
-            <Text style={[styles.exportTabText, isSmallScreen && { fontSize: 10 }, { color: '#818cf8' }]}>PDF</Text>
+            <FileDown color={palette.violet.ink} size={15} />
+            <Text style={[styles.exportTabText, { color: palette.violet.ink }]}>PDF</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -704,12 +699,13 @@ const ParticipantListScreen = ({ navigation, route }: any) => {
       <ScrollView 
         horizontal 
         showsHorizontalScrollIndicator={false} 
-        style={{ flexGrow: 0, minHeight: isSmallScreen ? 44 : 48, marginBottom: 16 }}
+        style={{ flexGrow: 0, marginBottom: 16 }}
         contentContainerStyle={[styles.tabContainer, { marginBottom: 0, alignItems: 'center' }, isSmallScreen && { paddingHorizontal: 16 }]}
       >
         {(['All', 'Student', 'Employee', 'Guest'] as const).map((tab) => (
           <TouchableOpacity 
             key={tab} 
+            accessibilityRole="tab" accessibilityState={{ selected: activeTab === tab }}
             onPress={() => setActiveTab(tab)}
             style={[styles.tab, activeTab === tab && styles.activeTab, isSmallScreen && { paddingHorizontal: 12, paddingVertical: 6 }]}
           >
@@ -721,10 +717,11 @@ const ParticipantListScreen = ({ navigation, route }: any) => {
       {/* Contextual Filters */}
       <View style={[styles.filterSection, isSmallScreen && { paddingHorizontal: 16 }]}>
         <View style={[styles.searchBar, isSmallScreen && { paddingHorizontal: 12 }]}>
-          <Search color="#64748b" size={16} />
+          <Search color={palette.blue.ink} size={18} />
           <TextInput 
-            placeholder="Search participants..."
-            placeholderTextColor="#64748b"
+            accessibilityLabel="Search participants"
+            placeholder="Search participants"
+            placeholderTextColor="#94a3b8"
             style={[styles.searchInput, isSmallScreen && { paddingVertical: 8, fontSize: 13 }]}
             value={localSearchQuery}
             onChangeText={setLocalSearchQuery}
@@ -1045,34 +1042,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#020617',
   },
   header: {
-    paddingHorizontal: 24,
-    paddingTop: 24,
-    paddingBottom: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexShrink: 1,
-    marginRight: 10,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    backgroundColor: '#0f172a',
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 16,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: 'white',
+    maxWidth: '100%',
+    gap: 10,
   },
   tabContainer: {
     flexDirection: 'row',
@@ -1081,6 +1058,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   tab: {
+    minHeight: 48,
+    justifyContent: 'center',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 12,
@@ -1089,16 +1068,16 @@ const styles = StyleSheet.create({
     borderColor: '#1e293b',
   },
   activeTab: {
-    backgroundColor: '#3b82f6',
-    borderColor: '#3b82f6',
+    backgroundColor: palette.blue.surface,
+    borderColor: palette.blue.edge,
   },
   tabText: {
-    color: '#64748b',
+    color: palette.secondary,
     fontSize: 13,
     fontWeight: 'bold',
   },
   activeTabText: {
-    color: 'white',
+    color: palette.blue.ink,
   },
   filterSection: {
     paddingHorizontal: 24,
@@ -1108,14 +1087,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#0f172a',
-    borderRadius: 16,
+    borderRadius: 12,
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: '#334155',
     marginBottom: 12,
   },
   searchInput: {
     flex: 1,
+    minHeight: 48,
     color: 'white',
     fontSize: 14,
     paddingVertical: 12,
@@ -1127,6 +1107,7 @@ const styles = StyleSheet.create({
   },
   dropdown: {
     flex: 1,
+    minHeight: 48,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -1148,7 +1129,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   dropdownText: {
-    color: '#64748b',
+    color: palette.secondary,
     fontSize: 12,
     fontWeight: '500',
     flex: 1,
@@ -1340,18 +1321,20 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   headerRight: {
+    flexWrap: 'wrap',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 6,
   },
   exportTab: {
+    ...eventLayout.panel,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
+    minHeight: 48,
+    paddingHorizontal: 9,
     paddingVertical: 8,
     borderRadius: 10,
-    borderWidth: 1,
-    gap: 8,
+    gap: 5,
   },
   exportTabText: {
     fontSize: 12,

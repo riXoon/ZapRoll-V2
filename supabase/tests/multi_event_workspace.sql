@@ -1,6 +1,6 @@
--- Run in a disposable test database after applying all five event-workspace
+-- Run in a disposable test database after applying the event-workspace
 -- migrations, from 20261122064540_multi_event_workspace.sql through
--- 20261122152521_session_attendance_templates.sql.
+-- 20261127131148_session_attendance_switch.sql.
 begin;
 
 do $$
@@ -17,6 +17,7 @@ declare
   event_date_today date := (now() at time zone 'Asia/Manila')::date;
   session_config jsonb;
   submitted jsonb;
+  student_checkin_id uuid;
 begin
   insert into auth.users(id,raw_user_meta_data) values (admin_id,'{"full_name":"Test Admin"}')
     on conflict (id) do nothing;
@@ -26,6 +27,11 @@ begin
 
   perform public.manage_scheduled_event(next_event,admin_id,'create',
     jsonb_build_object('name','Three-day event','event_date',event_date_today,'timezone','Asia/Manila'));
+  -- This fixture exercises independent session limits, including on newer schemas.
+  if exists (select 1 from pg_attribute where attrelid = 'public.events'::regclass
+    and attname = 'shared_venue_capacity' and not attisdropped) then
+    update public.events set shared_venue_capacity = false where id = next_event;
+  end if;
   perform public.manage_scheduled_event(next_event,admin_id,'create',
     jsonb_build_object('name','Retry must not overwrite','event_date',event_date_today,'timezone','Asia/Manila'));
   assert (select name from public.events where id = next_event) = 'Three-day event';
@@ -36,7 +42,7 @@ begin
     'name','Three-day event','event_date',event_date_today,'registration_opens_at',now()-interval '2 days',
     'pre_reg_deadline',now()+interval '5 minutes'));
   perform public.manage_scheduled_event(next_event,admin_id,'role',jsonb_build_object(
-    'id',student_role,'name','Students','student_priority',true,'registration_capacity',4,
+    'id',student_role,'name','Student','student_priority',true,'registration_capacity',4,
     'registration_url','https://example.org/register','required_fields','["course"]'::jsonb));
   perform public.manage_scheduled_event(next_event,admin_id,'venue',jsonb_build_object(
     'id',venue,'name','Hall','capacity',3,'role_caps',jsonb_build_object(student_role::text,3)));
@@ -70,10 +76,44 @@ begin
   end;
   perform public.submit_scheduled_event(next_event,'pre-registration',null,
     jsonb_build_object('role_id',student_role,'email','Owner@Example.org','full_name','Registered student',
-      'metadata',jsonb_build_object('course','Example')));
+      'metadata',jsonb_build_object('course','Example','student_number','26-0042')));
   submitted := public.submit_scheduled_event(next_event,'pre-registration',null,
     jsonb_build_object('email','owner@example.org'));
   assert (submitted->>'created')::boolean = false;
+  begin
+    perform public.submit_scheduled_student_attendance(next_event,later_session,'{"student_number":"26-0042"}');
+    raise exception 'Accepted student-number attendance before check-in opens';
+  exception when sqlstate 'PT410' then null;
+  end;
+  assert (public.set_scheduled_attendance_override(next_event,later_session,true)->>'attendance_open_override')::boolean;
+  submitted := public.submit_scheduled_student_attendance(next_event,later_session,'{"student_number":"26-0042"}');
+  assert (submitted->>'created')::boolean;
+  assert (select attendance_open_override from public.event_schedule where id = session_id) is null;
+  perform public.set_scheduled_attendance_override(next_event,later_session,false);
+  begin
+    perform public.submit_scheduled_student_attendance(next_event,later_session,'{"student_number":"26-0042"}');
+    raise exception 'Student-number retry bypassed the attendance switch';
+  exception when sqlstate 'PT410' then null;
+  end;
+  begin
+    perform public.submit_scheduled_event(next_event,'attendance',later_session,'{"email":"owner@example.org"}');
+    raise exception 'Email retry bypassed the attendance switch';
+  exception when sqlstate 'PT410' then null;
+  end;
+  perform public.set_scheduled_attendance_override(next_event,later_session,null);
+  assert (select attendance_open_override from public.event_schedule where id = later_session) is null;
+  begin
+    perform public.submit_scheduled_student_attendance(next_event,later_session,'{"student_number":"26-0042"}');
+    raise exception 'Restoring the schedule left a future session open';
+  exception when sqlstate 'PT410' then null;
+  end;
+  begin
+    perform public.submit_scheduled_event(next_event,'pre-registration',null,
+      jsonb_build_object('role_id',student_role,'email','duplicate@example.org','full_name','Duplicate number',
+        'metadata',jsonb_build_object('course','Example','student_number','26 – 0042')));
+    raise exception 'Accepted a duplicate normalized student number in the same event';
+  exception when unique_violation then null;
+  end;
 
   perform public.manage_scheduled_event(next_event,admin_id,'settings',jsonb_build_object(
     'name','Three-day event','event_date',event_date_today,'registration_opens_at',now()-interval '2 days',
@@ -88,21 +128,44 @@ begin
   end;
   session_config := session_config || jsonb_build_object('walkins_open_at', now()-interval '30 minutes');
   perform public.manage_scheduled_event(next_event,admin_id,'session',session_config);
+  begin
+    perform public.submit_scheduled_event(next_event,'attendance',session_id,
+      jsonb_build_object('role_id',student_role,'email','alternate@example.org','full_name','Duplicate walk-in',
+        'metadata',jsonb_build_object('course','Example','student_number','26-0042')));
+    raise exception 'Created a walk-in for an existing student number';
+  exception when unique_violation then null;
+  end;
   perform public.submit_scheduled_event(next_event,'attendance',session_id,
     jsonb_build_object('role_id',student_role,'email','walkin@example.org','full_name','Walk-in student',
-      'metadata',jsonb_build_object('course','Example')));
+      'metadata',jsonb_build_object('course','Example','student_number','26-0007')));
   begin
     perform public.submit_scheduled_event(next_event,'attendance',session_id,
       jsonb_build_object('role_id',student_role,'email','extra@example.org','full_name','Another walk-in'));
     raise exception 'Walk-in used a protected place';
   exception when sqlstate 'PT409' then null;
   end;
-  submitted := public.submit_scheduled_attendance(next_event,session_id,
-    '{"email":"owner@example.org","answers":{"confirmation":"yes"}}');
+  begin
+    perform public.submit_scheduled_student_attendance(next_event,session_id,'{"student_number":"26-0007"}');
+    raise exception 'Accepted a walk-in under the pre-registered student-number path';
+  exception when sqlstate 'PT404' then null;
+  end;
+  begin
+    perform public.submit_scheduled_student_attendance(next_event,session_id,'{"student_number":"26-9999"}');
+    raise exception 'Accepted an unknown student number';
+  exception when sqlstate 'PT404' then null;
+  end;
+  submitted := public.submit_scheduled_student_attendance(next_event,session_id,
+    '{"student_number":"26 – 0042","answers":{"confirmation":"yes"}}');
   assert (submitted->>'created')::boolean = true;
+  assert not (submitted ? 'display_name');
+  student_checkin_id := (submitted->>'checkin_id')::uuid;
+  submitted := public.submit_scheduled_student_attendance(next_event,session_id,'{"student_number":"26-0042"}');
+  assert (submitted->>'created')::boolean = false;
+  assert (submitted->>'checkin_id')::uuid = student_checkin_id;
   submitted := public.submit_scheduled_attendance(next_event,session_id,
     '{"email":"owner@example.org","answers":{"confirmation":"changed"}}');
   assert (submitted->>'created')::boolean = false;
+  assert (submitted->>'checkin_id')::uuid = student_checkin_id;
   assert (select answers->>'confirmation' from public.event_checkins where id = (submitted->>'checkin_id')::uuid) = 'yes';
   perform public.submit_scheduled_event(next_event,'feedback',session_id,
     '{"email":"owner@example.org","answers":{"rating":"Good"}}');
@@ -136,11 +199,21 @@ begin
   assert (select full_name from public.registrations where id = former_registration) = 'Legacy participant';
   perform public.manage_scheduled_event(next_event,admin_id,'archive','{}');
   begin
+    perform public.set_scheduled_attendance_override(next_event,session_id,true);
+    raise exception 'Reopened attendance for an archived event';
+  exception when sqlstate 'PT410' then null;
+  end;
+  begin
+    perform public.submit_scheduled_student_attendance(next_event,session_id,'{"student_number":"26-0042"}');
+    raise exception 'Accepted student-number attendance for an archived event';
+  exception when sqlstate 'PT410' then null;
+  end;
+  begin
     perform public.submit_scheduled_event(next_event,'attendance',session_id,'{"email":"owner@example.org"}');
     raise exception 'Accepted an archived session write';
   exception when sqlstate 'PT410' then null;
   end;
-  assert (select count(*) from public.event_checkins where event_id = next_event) = 2;
+  assert (select count(*) from public.event_checkins where event_id = next_event) = 3;
   assert (select count(*) from public.event_session_feedback where event_id = next_event) = 1;
 end $$;
 

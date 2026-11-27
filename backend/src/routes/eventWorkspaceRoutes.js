@@ -5,6 +5,7 @@ const auth = require('../middleware/authMiddleware');
 
 const router = express.Router();
 const eventFields = 'id,name,event_date,event_mode,lifecycle,timezone,registration_opens_at,pre_reg_deadline,pre_reg_manual,pre_reg_open,archived_at';
+const eventRegistrationFields = `${eventFields},student_pre_registration_only`;
 const roleFields = 'id,name,student_priority,registration_capacity,registration_url,required_fields';
 const venueFields = 'id,name,capacity,role_caps';
 const sessionFields = 'id,venue_id,title,starts_at,ends_at,checkin_opens_at,walkins_open_at,capacity,role_caps,attendance_url,feedback_url,reserved_students';
@@ -29,10 +30,37 @@ async function result(query) {
   return data;
 }
 
-async function eventById(id) {
-  const event = await result(db.from('events').select(eventFields).eq('id', id).maybeSingle());
+async function eventById(id, fields = eventRegistrationFields) {
+  const event = await result(db.from('events').select(fields).eq('id', id).maybeSingle());
   if (!event) fail(404, 'Event not found.');
   return event;
+}
+
+function isStudentRole(role) {
+  return role.name.trim().toLowerCase() === 'student';
+}
+
+async function studentRegistrationRole(eventId) {
+  const roles = await result(db.from('event_roles').select(`${roleFields},registration_template`).eq('event_id', eventId));
+  const role = roles.find(isStudentRole);
+  if (!role) fail(409, 'The student registration form is not configured.');
+  return role;
+}
+
+function registrationForm(event, role) {
+  return {
+    id: role.id, type: 'pre-registration', eventId: event.id, roleId: role.id, eventName: event.name, roleName: role.name,
+    title: role.registration_template.title, pages: role.registration_template.questions,
+    requiredFields: role.required_fields,
+  };
+}
+
+async function selectSessions(query) {
+  const response = await query(',attendance_open_override');
+  if (response.error?.code === '42703' && response.error.message.includes('attendance_open_override')) {
+    return result(query(''));
+  }
+  return result(response);
 }
 
 async function eventConfiguration(id, adminView = false) {
@@ -42,7 +70,8 @@ async function eventConfiguration(id, adminView = false) {
   const [roles, venues, sessions] = await Promise.all([
     result(roleQuery.order('name')),
     result(db.from('event_venues').select(venueFields).eq('event_id', id).order('name')),
-    result(db.from('event_schedule').select(adminView ? `${sessionFields},checkins:event_checkins(count)` : sessionFields)
+    selectSessions(override => db.from('event_schedule')
+      .select(sessionFields + override + (adminView ? ',checkins:event_checkins(count)' : ''))
       .eq('event_id', id).order('starts_at')),
   ]);
   if (!adminView) return { roles, venues, sessions };
@@ -63,13 +92,21 @@ async function eventConfiguration(id, adminView = false) {
 }
 
 function sharedPreRegistrationUrl(roles, eventId) {
-  const links = new Set(roles.map(role => role.registration_url).filter(Boolean));
-  if (links.size !== 1) return null;
-  const [link] = links;
-  if (!URL.canParse(link)) return null;
-  const url = new URL(link);
-  return url.protocol === 'https:' && url.pathname.replace(/\/$/, '').endsWith(`/${eventId}`)
-    && url.searchParams.get('type') === 'pre-registration' && !url.searchParams.has('roleId') ? link : null;
+  const eventLinks = [];
+  const legacyLinks = [];
+  for (const { id, registration_url: link } of roles) {
+    if (!link || !URL.canParse(link)) continue;
+    const url = new URL(link);
+    if (url.protocol !== 'https:' || url.searchParams.get('type') !== 'pre-registration' || url.searchParams.has('roleId')) continue;
+    const path = url.pathname.replace(/\/$/, '');
+    if (path.endsWith(`/${eventId}`)) {
+      eventLinks.push(link);
+    } else if (path.endsWith(`/${id}`)) {
+      url.pathname = path.slice(0, -id.length) + eventId;
+      legacyLinks.push(url.toString());
+    }
+  }
+  return eventLinks.sort()[0] ?? legacyLinks.sort()[0] ?? null;
 }
 
 function formQr(link, context) {
@@ -131,23 +168,22 @@ router.get('/forms/:formId', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!uuidPattern.test(formId)) fail(404, 'Form not found.');
   if (type === 'pre-registration') {
-    const role = await result(db.from('event_roles').select('event_id,name,registration_url,registration_template,required_fields')
+    const role = await result(db.from('event_roles').select('id,event_id,name,registration_url,registration_template,required_fields')
       .eq('id', formId).maybeSingle());
     if (!role?.registration_template || !role.registration_url) fail(404, 'Form not found.');
     const event = await eventById(role.event_id);
+    if (event.student_pre_registration_only && !isStudentRole(role)) fail(404, 'Form not found.');
     if (!preRegistrationOpen(event)) fail(410, 'Pre-registration is closed.');
-    res.json({ data: {
-      id: formId, type, eventId: event.id, roleId: formId, eventName: event.name, roleName: role.name,
-      title: role.registration_template.title, pages: role.registration_template.questions,
-      requiredFields: role.required_fields,
-    } });
+    res.json({ data: registrationForm(event, role) });
     return;
   }
   const form = sessionForms.get(type);
   if (!form) fail(404, 'Form not found.');
-  const attendanceWindow = type === 'attendance' ? ',checkin_opens_at,ends_at,walkins_open_at' : '';
-  const session = await result(db.from('event_schedule').select(`event_id,title,${form.link},${form.template}${attendanceWindow}`)
-    .eq('id', formId).maybeSingle());
+  const sessionQuery = (extra = '') => db.from('event_schedule').select(`event_id,title,${form.link},${form.template}${extra}`)
+    .eq('id', formId).maybeSingle();
+  const session = type === 'attendance'
+    ? await selectSessions(override => sessionQuery(',checkin_opens_at,ends_at,walkins_open_at' + override))
+    : await result(sessionQuery());
   const template = session?.[form.template];
   if (!template || !session[form.link]) fail(404, 'Form not found.');
   const event = await eventById(session.event_id);
@@ -155,12 +191,13 @@ router.get('/forms/:formId', async (req, res) => {
   if (event.event_mode !== 'scheduled' || event.lifecycle !== 'active') fail(404, 'Form not found.');
   if (type === 'attendance') {
     const now = Date.now();
-    if (!(now >= Date.parse(session.checkin_opens_at) && now < Date.parse(session.ends_at))) {
+    const open = session.attendance_open_override ?? (now >= Date.parse(session.checkin_opens_at) && now < Date.parse(session.ends_at));
+    if (!open) {
       fail(410, 'Session check-in is closed.');
     }
   }
   res.json({ data: {
-    id: formId, type: 'evaluation', eventId: event.id, sessionId: formId,
+    id: formId, type, eventId: event.id, sessionId: formId,
     eventName: event.name, sessionTitle: session.title,
     title: template.title, pages: template.questions,
     ...(type === 'attendance' && { walkinsOpenAt: session.walkins_open_at }),
@@ -184,6 +221,13 @@ router.get('/:id/config', async (req, res) => {
   const open = preRegistrationOpen(event);
   const publicEvent = { ...event, pre_reg_open: open };
   if (preRegForm) {
+    if (open && event.student_pre_registration_only) {
+      const role = await studentRegistrationRole(event.id);
+      const { registration_template, ...student } = role;
+      const form = registration_template && student.registration_url
+        ? registrationForm(event, role) : null;
+      return res.json({ data: { event: publicEvent, roles: [student], form } });
+    }
     const roles = open ? await result(db.from('event_roles').select(roleFields).eq('event_id', event.id).order('name')) : [];
     return res.json({ data: { event: publicEvent, roles } });
   }
@@ -194,17 +238,34 @@ router.post('/:id/submissions/:action', async (req, res) => {
   confirmFormsIntegration(req);
   const { action, id } = req.params;
   if (!['pre-registration', 'attendance', 'feedback'].includes(action)) fail(404, 'Unknown submission type.');
-  const { session_id: sessionId, email, role_id: roleId, full_name: fullName, metadata, answers } = req.body || {};
-  if (typeof email !== 'string' || (action !== 'pre-registration' && !uuidPattern.test(sessionId))) {
-    fail(400, 'Provide the verified email and a session ID when required.');
+  const { session_id: sessionId, email, student_number: studentNumber, role_id: roleId, full_name: fullName, metadata, answers } = req.body || {};
+  const studentCheckin = action === 'attendance' && studentNumber !== undefined;
+  if (studentCheckin && (email !== undefined || !validStudentNumber(studentNumber))) {
+    fail(400, 'Provide a valid student number by itself for student check-in.');
+  }
+  if (action !== 'pre-registration' && !uuidPattern.test(sessionId)) fail(400, 'Choose a valid session.');
+  if (!studentCheckin && typeof email !== 'string') fail(400, 'Provide the verified email.');
+  if (!studentCheckin && action !== 'feedback' && metadata?.student_number !== undefined && !validStudentNumber(metadata.student_number)) {
+    fail(400, 'Enter a valid student number.');
+  }
+  const registrationEvent = action === 'pre-registration' ? await eventById(id) : null;
+  let registrationRoleId = roleId;
+  if (registrationEvent?.student_pre_registration_only) {
+    if (!preRegistrationOpen(registrationEvent)) fail(410, 'Pre-registration is closed.');
+    const student = await studentRegistrationRole(id);
+    if (roleId !== undefined && roleId !== student.id) fail(400, 'Pre-registration is for students.');
+    registrationRoleId = student.id;
   }
   const withAttendanceAnswers = action === 'attendance' && answers !== undefined;
-  const data = await result(db.rpc(withAttendanceAnswers ? 'submit_scheduled_attendance' : 'submit_scheduled_event', {
+  const rpc = studentCheckin ? 'submit_scheduled_student_attendance'
+    : withAttendanceAnswers ? 'submit_scheduled_attendance' : 'submit_scheduled_event';
+  const data = await result(db.rpc(rpc, {
     p_event: id, p_session: sessionId || null,
-    ...(!withAttendanceAnswers && { p_action: action }),
-    p_data: { email, role_id: roleId, full_name: fullName, metadata, answers },
+    ...(rpc === 'submit_scheduled_event' && { p_action: action }),
+    p_data: studentCheckin ? { student_number: studentNumber, ...(answers !== undefined && { answers }) }
+      : { email, role_id: registrationRoleId, full_name: fullName, metadata, answers },
   }));
-  const event = await eventById(id);
+  const event = registrationEvent || await eventById(id);
   const session = sessionId && await result(db.from('event_schedule')
     .select('id,title,starts_at,venue:event_venues(name)').eq('event_id', id).eq('id', sessionId).maybeSingle());
   res.set('Cache-Control', 'no-store');
@@ -213,6 +274,11 @@ router.post('/:id/submissions/:action', async (req, res) => {
       session_starts_at: session?.starts_at, venue_name: session?.venue?.name },
   });
 });
+
+function validStudentNumber(value) {
+  return typeof value === 'string' && value.length <= 128
+    && /^[a-z\d][a-z\d-]{0,63}$/i.test(value.replace(/\s/g, '').replace(/[‐‑‒–—−]/g, '-'));
+}
 
 router.use(auth, async (req, res, next) => {
   const profile = await result(db.from('admin_profiles').select('id').eq('id', req.user.id).maybeSingle());
@@ -239,7 +305,11 @@ router.post('/', async (req, res) => {
 });
 
 router.get('/:id', async (req, res) => {
-  const event = await eventById(req.params.id);
+  const id = req.params.id;
+  const response = await db.from('events').select(`${eventRegistrationFields},shared_venue_capacity`).eq('id', id).maybeSingle();
+  const event = response.error?.code === '42703' && response.error.message.includes('shared_venue_capacity')
+    ? await eventById(id) : await result(response);
+  if (!event) fail(404, 'Event not found.');
   res.json({ data: { event, ...await eventConfiguration(event.id, true) } });
 });
 
@@ -270,14 +340,15 @@ router.post('/:id/roles/:roleId/pre-registration-template', async (req, res) => 
   const { id, roleId } = req.params;
   if (!uuidPattern.test(roleId)) fail(400, 'Choose a role for this event.');
   const update = { registration_template: readFormTemplate(req.body) };
+  const event = await eventById(id);
+  if (event.event_mode !== 'scheduled' || event.lifecycle === 'archived') fail(409, 'This event cannot be edited here.');
   const roles = await result(db.from('event_roles').select('id,registration_url').eq('event_id', id));
-  const sharedUrl = sharedPreRegistrationUrl(roles, id);
-  const url = sharedUrl || formUrl(roleId, 'pre-registration');
+  const url = sharedPreRegistrationUrl(roles, id) || formUrl(id, 'pre-registration');
   if (url) update.registration_url = url;
   const role = await result(db.from('event_roles').update(update)
     .eq('event_id', id).eq('id', roleId).select('registration_template').maybeSingle());
   if (!role) fail(404, 'Role not found for this event.');
-  res.json({ data: { ...role.registration_template, formId: roleId, type: 'pre-registration', url, shared: !!sharedUrl } });
+  res.json({ data: { ...role.registration_template, formId: roleId, type: 'pre-registration', url, shared: !!url } });
 });
 
 for (const [type, form] of sessionForms) {
@@ -310,7 +381,7 @@ async function countRows(query) {
 }
 
 router.get('/:id/dashboard', async (req, res) => {
-  const event = await eventById(req.params.id);
+  const event = await eventById(req.params.id, 'id,event_mode');
   if (event.event_mode !== 'scheduled') fail(409, 'Use the historical analytics for this event.');
   const id = event.id;
   const forEvent = table => db.from(table).select('id', { count: 'exact', head: true }).eq('event_id', id);
@@ -342,8 +413,17 @@ router.get('/:id/dashboard', async (req, res) => {
 
 router.post('/:id/actions/:action', async (req, res) => {
   const { id, action } = req.params;
-  if (!['archive', 'publish', 'settings', 'role', 'venue', 'session', 'feedback-link', 'pre-reg-status'].includes(action)) fail(404, 'Unknown event action.');
+  if (!['archive', 'publish', 'settings', 'role', 'venue', 'session', 'feedback-link', 'pre-reg-status', 'attendance-status'].includes(action)) fail(404, 'Unknown event action.');
   const data = { ...req.body };
+  if (action === 'attendance-status') {
+    if (!uuidPattern.test(data.id) || ![true, false, null].includes(data.open)) {
+      fail(400, 'Choose a session and set attendance to open, closed, or scheduled.');
+    }
+    const saved = await result(db.rpc('set_scheduled_attendance_override', {
+      p_event: id, p_session: data.id, p_open: data.open,
+    }));
+    return res.json({ data: saved });
+  }
   if (action === 'settings' && (typeof data.name !== 'string' || !data.name.trim() || data.name.length > 120)) {
     fail(400, 'Enter an event name.');
   }
@@ -358,6 +438,15 @@ router.post('/:id/actions/:action', async (req, res) => {
       .eq('event_id', id).eq('id', data.id).select('id,feedback_url').maybeSingle());
     if (!saved) fail(404, 'Session not found for this event.');
     return res.json({ data: saved });
+  }
+  if (action === 'venue' && data.affected_sessions !== undefined) {
+    if (!uuidPattern.test(data.id) || !data.affected_sessions || typeof data.affected_sessions !== 'object'
+      || Array.isArray(data.affected_sessions) || !Object.keys(data.affected_sessions).length) {
+      fail(400, 'Review the linked sessions before saving the venue.');
+    }
+    const response = await db.rpc('resize_student_event_venue', { p_event: id, p_admin: req.user.id, p_data: data });
+    if (response.error?.code === 'PGRST202') fail(503, 'Saving a venue with its sessions requires the latest server update.');
+    return res.json({ data: await result(response) });
   }
   const saved = await result(db.rpc('manage_scheduled_event', {
     p_event: id, p_admin: req.user.id, p_action: action, p_data: data,

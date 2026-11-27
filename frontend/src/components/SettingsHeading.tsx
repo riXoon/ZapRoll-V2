@@ -1,14 +1,19 @@
 import React from 'react';
-import { Text, useWindowDimensions, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { styles } from './eventSettingsStyles';
+import { eventPalette as palette } from './eventPalette';
 
-export function SettingsHeading({ icon: Icon, title, color = '#3b82f6' }: {
+export function SettingsHeading({ icon: Icon, title, color = palette.blue.ink }: {
   icon: LucideIcon; title: string; color?: string;
 }) {
-  const small = useWindowDimensions().width < 420;
   return <View style={[styles.cardHeaderLeft, { flexShrink: 1 }]}>
-    <Icon color={color} size={small ? 18 : 20} />
-    <Text accessibilityRole="header" style={[styles.cardTitle, { flexShrink: 1 }, small && { fontSize: 16 }]}>{title}</Text>
+    <View style={headingStyles.icon}><Icon color={color} size={18} /></View>
+    <Text accessibilityRole="header" style={[styles.cardTitle, headingStyles.title]}>{title}</Text>
   </View>;
 }
+
+const headingStyles = StyleSheet.create({
+  icon: { width: 34, height: 34, borderRadius: 9, backgroundColor: palette.blue.surface, alignItems: 'center', justifyContent: 'center' },
+  title: { flexShrink: 1 },
+});

@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Share, ScrollView, Platform, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Share, ScrollView, Platform, Image, useWindowDimensions } from 'react-native';
 import { FeedbackModal } from '../components/FeedbackModal';
 import { ArrowLeft, Download, Share2, ShieldCheck, Lock, Sun, Moon, CheckCircle, Globe, Briefcase, Users, Award } from 'lucide-react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
@@ -8,16 +8,23 @@ import QRCode from 'react-native-qrcode-svg';
 import ViewShot, { type ViewShotRef } from "react-native-view-shot";
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as FileSystem from 'expo-file-system/legacy';
+import { eventLayout } from '../components/eventLayout';
+import { eventPalette as palette } from '../components/eventPalette';
 
 const saveQrToFiles =
   Platform.OS === 'android' && Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
 const QRGeneratorScreen = ({ route, navigation }: any) => {
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const qrRef = useRef<any>(null);
   const viewShotRef = useRef<ViewShotRef>(null);
   const { roleName, title, capacity, url, showControls, type, eventName, venue, eventDate, isPreReg } = route.params || { roleName: 'General', capacity: '100', eventName: 'Synergy 2026' };
   const isUrlMode = !!url;
+  const scheduled = route.params?.eventMode === 'scheduled';
+  const qrSize = Math.min(200, width - 110);
+  const purpose = isPreReg || type === 'pre-reg' ? 'pre-registration' : type === 'session-attendance' ? 'attendance' : 'feedback';
+  const scheduledInstructions = `Scan to open the ${purpose} form.`;
   const [isDownloading, setIsDownloading] = useState(false);
 
   // Feedback Modal State
@@ -53,7 +60,9 @@ const QRGeneratorScreen = ({ route, navigation }: any) => {
   const handleShare = async () => {
     try {
       await Share.share({
-        message: `ZapRoll Event Access Code for ${roleName || title || 'the event'}. Scan this code during registration.`,
+        message: isUrlMode
+          ? [eventName, roleName || title, url].filter(Boolean).join('\n')
+          : `ZapRoll Event Access Code for ${roleName || title || 'the event'}. Scan this code during registration.`,
       });
     } catch (error) {
       console.log(error);
@@ -118,18 +127,19 @@ const QRGeneratorScreen = ({ route, navigation }: any) => {
       <View style={styles.header}>
         <TouchableOpacity 
           onPress={() => navigation.goBack()}
-          style={styles.backButton}
+          style={eventLayout.iconButton}
+          accessibilityRole="button" accessibilityLabel="Back"
         >
           <ArrowLeft color="white" size={20} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Access QR Code</Text>
+        <Text accessibilityRole="header" style={styles.headerTitle}>Access QR code</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 20 }]} showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
         <Animated.View entering={FadeInUp.delay(100)} style={styles.roleInfo}>
           <Text style={styles.roleLabel}>{isUrlMode ? 'DESTINATION LINK' : 'PARTICIPANT ROLE'}</Text>
-          <Text style={[
+          <Text selectable={isUrlMode} style={[
             styles.roleName, 
             isUrlMode && { 
               fontSize: 16, 
@@ -171,9 +181,10 @@ const QRGeneratorScreen = ({ route, navigation }: any) => {
               ]}>
                 <QRCode
                   value={qrData}
-                  size={200}
-                  color="white"
-                  backgroundColor="transparent"
+                  size={qrSize}
+                   color={scheduled ? '#0f172a' : 'white'}
+                   backgroundColor={scheduled ? '#ffffff' : 'transparent'}
+                   quietZone={scheduled ? 12 : 0}
                   logoSize={50}
                   logoMargin={2}
                   logoBorderRadius={15}
@@ -234,12 +245,12 @@ const QRGeneratorScreen = ({ route, navigation }: any) => {
             <Text style={[
               styles.shareText, 
               { color: type?.includes('pm') ? '#8b5cf6' : type?.includes('employee') ? '#10b981' : type?.includes('guest') ? '#f59e0b' : type?.includes('poster') ? '#ec4899' : '#3b82f6' }
-            ]}>Share to Team</Text>
+            ]}>{isUrlMode ? 'Share link' : 'Share to Team'}</Text>
           </TouchableOpacity>
         </Animated.View>
 
         <Text style={styles.disclaimer}>
-          {type === 'session-attendance'
+          {scheduled ? scheduledInstructions : type === 'session-attendance'
             ? 'Scan this code to open the attendance form for this session.'
             : isUrlMode
             ? "When participants scan this, they will be redirected to the evaluation form in their mobile browser."
@@ -262,12 +273,12 @@ const QRGeneratorScreen = ({ route, navigation }: any) => {
               <View style={styles.exportHeader}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                   <Image 
-                    source={require('../../assets/Synergy-01.png')} 
+                    source={scheduled ? require('../../assets/icon.png') : require('../../assets/Synergy-01.png')}
                     style={styles.exportLogo}
                     resizeMode="contain"
                   />
                   <View>
-                    <Text style={styles.exportBrand}>SYNERGY</Text>
+                    <Text style={styles.exportBrand}>{scheduled ? 'ZAPROLL' : 'SYNERGY'}</Text>
                     <Text style={[
                       styles.exportEvent, 
                       { 
@@ -317,7 +328,7 @@ const QRGeneratorScreen = ({ route, navigation }: any) => {
                   </Text>
                   <View style={[styles.exportDivider, { backgroundColor: type?.includes('pm') ? '#8b5cf6' : type?.includes('employee') ? '#10b981' : type?.includes('guest') ? '#f59e0b' : type?.includes('poster') ? '#ec4899' : '#3b82f6' }]} />
                   <Text style={styles.exportDisclaimer}>
-                    {isPreReg || type === 'pre-reg'
+                    {scheduled ? scheduledInstructions : isPreReg || type === 'pre-reg'
                       ? "Scan this QR code to reserve your slot. This is for pre-registration purposes only; on-site registration is still required on the day of the event."
                       : type?.includes('-eval')
                         ? "Scan this code to access the evaluation form. Your feedback is essential for the continuous improvement of our conference sessions."
@@ -329,7 +340,7 @@ const QRGeneratorScreen = ({ route, navigation }: any) => {
               <View style={styles.exportFooter}>
                 <View style={{ alignItems: 'center', width: '100%' }}>
                   <Text style={styles.footerText}>
-                    <Text style={styles.footerHighlight}>SYNERGY 2026</Text> • POWERED BY <Text style={styles.footerHighlight}>ZAPROLL</Text>
+                    <Text style={styles.footerHighlight}>{scheduled ? eventName : 'SYNERGY 2026'}</Text> • POWERED BY <Text style={styles.footerHighlight}>ZAPROLL</Text>
                   </Text>
                   <Text style={styles.footerDevText}>
                     Developed by Adrian Frivaldo & Erickson Guhilde
@@ -358,43 +369,33 @@ const styles = StyleSheet.create({
     backgroundColor: '#020617',
   },
   header: {
-    paddingHorizontal: 24,
-    paddingTop: 24,
-    paddingBottom: 16,
+    ...eventLayout.frame,
+    paddingTop: 14,
+    paddingBottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#0f172a',
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    backgroundColor: '#0f172a',
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 16,
-    borderWidth: 1,
-    borderColor: '#1e293b',
+    gap: 12,
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: 'white',
+    ...eventLayout.sectionTitle,
+    flex: 1,
+    fontSize: 24,
   },
   scrollContent: {
     flexGrow: 1,
   },
   content: {
-    padding: 32,
+    ...eventLayout.frame,
+    maxWidth: 540,
+    paddingTop: 12,
     alignItems: 'center',
   },
   roleInfo: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 22,
   },
   roleLabel: {
-    color: '#64748b',
+    color: palette.secondary,
     fontSize: 12,
     fontWeight: 'bold',
     letterSpacing: 2,
@@ -405,6 +406,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: 'white',
     marginBottom: 12,
+    textAlign: 'center',
   },
   badge: {
     backgroundColor: 'rgba(59, 130, 246, 0.1)',
@@ -420,29 +422,23 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   qrContainer: {
+    width: '100%',
     alignItems: 'center',
-    marginBottom: 48,
+    marginBottom: 24,
   },
   qrFrame: {
-    width: 280,
-    height: 280,
-    backgroundColor: '#0f172a',
-    borderRadius: 40,
-    padding: 24,
+    ...eventLayout.panel,
+    width: '100%',
+    maxWidth: 290,
+    minHeight: 260,
+    padding: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    shadowColor: '#3b82f6',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.2,
-    shadowRadius: 24,
-    elevation: 10,
   },
   qrBackground: {
-    padding: 16,
+    padding: 10,
     backgroundColor: '#020617',
-    borderRadius: 24,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#1e293b',
   },
@@ -466,8 +462,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 18,
-    borderRadius: 20,
+    minHeight: 50,
+    paddingVertical: 12,
+    borderRadius: 12,
     gap: 12,
   },
   btnText: {
@@ -479,15 +476,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 18,
-    borderRadius: 20,
+    minHeight: 50,
+    paddingVertical: 12,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#1e293b',
     backgroundColor: '#0f172a',
     gap: 12,
   },
   shareText: {
-    color: '#3b82f6',
+    color: palette.blue.ink,
     fontSize: 16,
     fontWeight: 'bold',
   },

@@ -1,45 +1,53 @@
+import { eventPalette as palette } from './src/components/eventPalette';
 import React from 'react';
 import "./global.css";
-import { NavigationContainer } from '@react-navigation/native';
+import { DarkTheme, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { AppState, View, Platform, Text, ActivityIndicator } from 'react-native';
+import { Alert, AppState, View, Platform, Text, ActivityIndicator, ScrollView, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Home, Camera, Bell, Settings, Scan, BarChart3, CalendarDays } from 'lucide-react-native';
+import { Home, Settings, BarChart3, CalendarDays, ArrowRight, type LucideIcon } from 'lucide-react-native';
+import { StatusBar } from 'expo-status-bar';
 import { supabase } from './src/lib/supabase';
 import type { Session } from '@supabase/supabase-js';
+import { Button } from './src/components/ui';
+import { BrandMark, EventBanner, eventLayout } from './src/components/eventLayout';
 
 import { EventSelectionProvider, useEventSelection } from './src/lib/eventSelection';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
-// Placeholder for screens not yet implemented
-const PlaceholderScreen = ({ name }: { name: string }) => (
-  <View style={{ flex: 1, backgroundColor: '#020617', alignItems: 'center', justifyContent: 'center' }}>
-    <Text style={{ color: 'white', fontSize: 20, fontWeight: 'bold' }}>{name} Coming Soon</Text>
+const navigationTheme = {
+  ...DarkTheme,
+  colors: { ...DarkTheme.colors, background: palette.canvas, card: palette.surface, border: palette.edge, text: palette.text, primary: palette.blue.ink },
+};
+
+const tabIcon = (Icon: LucideIcon) => ({ color, focused }: { color: string; focused: boolean }) => (
+  <View style={[appStyles.tabIcon, focused && appStyles.activeTabIcon]}>
+    <Icon color={color} size={20} strokeWidth={focused ? 2.35 : 1.8} />
   </View>
 );
 
 function MainTabs({ userId }: { userId: string }) {
-  const { bottom } = useSafeAreaInsets();
-  const baseBottomPadding = Platform.OS === 'ios' ? 25 : 10;
-  const bottomPadding = Math.max(bottom, baseBottomPadding);
-
+  const { bottom, left, right } = useSafeAreaInsets();
   return (
     <EventSelectionProvider key={userId} userId={userId}>
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: '#020617', // slate-950
-          borderTopColor: '#1e293b', // slate-800
-          paddingBottom: bottomPadding,
-          paddingTop: 10,
-          height: (Platform.OS === 'ios' ? 90 : 70) + bottomPadding - baseBottomPadding,
+          backgroundColor: palette.surface,
+          borderTopColor: palette.edge,
+          paddingBottom: Math.max(bottom, 8),
+          paddingHorizontal: Math.max(left, right, 8),
+          paddingTop: 7,
+          height: 62 + Math.max(bottom, 8),
         },
-        tabBarActiveTintColor: '#3b82f6', // blue-500
-        tabBarInactiveTintColor: '#64748b', // slate-500
+        tabBarLabelPosition: 'below-icon',
+        tabBarActiveTintColor: palette.blue.ink,
+        tabBarInactiveTintColor: '#94a3b8',
+        tabBarLabelStyle: { fontWeight: '600', fontSize: 12 },
       }}
     >
       <Tab.Screen 
@@ -47,20 +55,20 @@ function MainTabs({ userId }: { userId: string }) {
         component={SelectedHome}
         options={{
           tabBarLabel: 'Home',
-          tabBarIcon: ({ color, size }) => <Home color={color} size={size} />,
+          tabBarIcon: tabIcon(Home),
         }}
       />
       <Tab.Screen
         name="Events"
         getComponent={() => require('./src/screens/EventWorkspaceScreen').default}
-        options={{ tabBarIcon: ({ color, size }) => <CalendarDays color={color} size={size} /> }}
+        options={{ tabBarIcon: tabIcon(CalendarDays) }}
       />
       <Tab.Screen 
         name="Config" 
         component={SelectedConfig}
         options={{
-          tabBarLabel: 'Config',
-          tabBarIcon: ({ color, size }) => <Settings color={color} size={size} />,
+          tabBarLabel: 'Settings',
+          tabBarIcon: tabIcon(Settings),
         }}
       />
       <Tab.Screen 
@@ -68,7 +76,7 @@ function MainTabs({ userId }: { userId: string }) {
         component={SelectedAnalytics}
         options={{
           tabBarLabel: 'Analytics',
-          tabBarIcon: ({ color, size }) => <BarChart3 color={color} size={size} />,
+          tabBarIcon: tabIcon(BarChart3),
         }}
       />
     </Tab.Navigator>
@@ -78,20 +86,58 @@ function MainTabs({ userId }: { userId: string }) {
 
 function SelectedHome(props: any) {
   const { selectedEvent } = useEventSelection();
+  if (!selectedEvent) return <ChooseEvent navigation={props.navigation} title="Event overview"
+    description="Choose an event to see its status and next steps." showSignOut />;
+  if (selectedEvent.event_mode === 'scheduled') {
+    const EventOverview = require('./src/screens/EventOverviewScreen').default;
+    return <EventOverview key={selectedEvent.id} event={selectedEvent} mode="home" navigation={props.navigation} />;
+  }
   const HomeScreen = require('./src/screens/HomeScreen').default;
-  return <HomeScreen key={selectedEvent?.id ?? 'default'} {...props} selectedEvent={selectedEvent} />;
+  return <HomeScreen key={selectedEvent.id} {...props} selectedEvent={selectedEvent} />;
+}
+
+function ChooseEvent({ navigation, title, description, showSignOut }: {
+  navigation: { navigate: (route: string) => void }; title: string; description: string; showSignOut?: boolean;
+}) {
+  const { top } = useSafeAreaInsets();
+  return <ScrollView style={appStyles.container} contentContainerStyle={[eventLayout.frame, appStyles.chooseContent, { paddingTop: top + 14 }]}>
+    <BrandMark />
+    <EventBanner>
+      <CalendarDays size={24} color={palette.blue.ink} />
+      <Text accessibilityRole="header" style={eventLayout.title}>{title}</Text>
+      <Text style={eventLayout.body}>{description}</Text>
+      <Button title="Open Events" icon={<ArrowRight size={18} color={palette.text} />} onPress={() => navigation.navigate('Events')} />
+    </EventBanner>
+    {showSignOut && (
+      <Button title="Sign out" variant="secondary" onPress={() => Alert.alert('Sign out?', undefined, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Sign out', onPress: async () => {
+          const { error } = await supabase.auth.signOut();
+          if (error) Alert.alert('Could not sign out', error.message);
+        } },
+      ])} />
+    )}
+  </ScrollView>;
 }
 
 function SelectedConfig(props: any) {
   const { selectedEvent } = useEventSelection();
+  if (!selectedEvent) return <ChooseEvent navigation={props.navigation} title="Event settings"
+    description="Choose an event to manage its settings." />;
   const AdminScreen = require('./src/screens/AdminScreen').default;
-  return <AdminScreen key={selectedEvent?.id ?? 'default'} {...props} selectedEvent={selectedEvent} />;
+  return <AdminScreen key={selectedEvent.id} {...props} selectedEvent={selectedEvent} />;
 }
 
 function SelectedAnalytics(props: any) {
   const { selectedEvent } = useEventSelection();
+  if (!selectedEvent) return <ChooseEvent navigation={props.navigation} title="Analytics"
+    description="Choose an event to view its registrations and attendance." />;
+  if (selectedEvent.event_mode === 'scheduled') {
+    const EventOverview = require('./src/screens/EventOverviewScreen').default;
+    return <EventOverview key={selectedEvent.id} event={selectedEvent} mode="analytics" navigation={props.navigation} />;
+  }
   const AnalyticsScreen = require('./src/screens/AnalyticsScreen').default;
-  return <AnalyticsScreen key={selectedEvent?.id ?? 'default'} {...props} selectedEvent={selectedEvent} />;
+  return <AnalyticsScreen key={selectedEvent.id} {...props} selectedEvent={selectedEvent} />;
 }
 
 export default function App() {
@@ -124,7 +170,8 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer theme={navigationTheme}>
+      <StatusBar style="light" />
       <Stack.Navigator 
         screenOptions={{
           headerShown: false,
@@ -165,3 +212,10 @@ export default function App() {
     </NavigationContainer>
   );
 }
+
+const appStyles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: palette.canvas },
+  chooseContent: { gap: 16, paddingBottom: 24 },
+  tabIcon: { width: 48, height: 28, alignItems: 'center', justifyContent: 'center', borderRadius: 10 },
+  activeTabIcon: { backgroundColor: palette.blue.surface },
+});

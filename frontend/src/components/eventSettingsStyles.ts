@@ -1,4 +1,6 @@
 import { StyleSheet } from 'react-native';
+import { eventLayout } from './eventLayout';
+import { eventPalette as palette } from './eventPalette';
 
 export const styles = StyleSheet.create({
   container: {
@@ -6,9 +8,9 @@ export const styles = StyleSheet.create({
     backgroundColor: '#020617',
   },
   header: {
-    paddingHorizontal: 24,
-    paddingTop: 24,
-    paddingBottom: 20,
+    ...eventLayout.frame,
+    paddingTop: 14,
+    paddingBottom: 18,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -19,13 +21,11 @@ export const styles = StyleSheet.create({
     marginRight: 12,
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: 'white',
+    ...eventLayout.title,
   },
   headerSubtitle: {
     fontSize: 14,
-    color: '#64748b',
+    color: palette.secondary,
   },
   usageStats: {
     fontSize: 12,
@@ -182,20 +182,13 @@ export const styles = StyleSheet.create({
     borderColor: '#1e293b',
   },
   logoutButton: {
-    width: 44,
-    height: 44,
-    backgroundColor: 'rgba(239, 68, 68, 0.05)',
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.2)',
+    ...eventLayout.iconButton,
   },
   tabBar: {
     flexDirection: 'row',
-    backgroundColor: '#0f172a',
-    marginHorizontal: 24,
-    padding: 6,
+    backgroundColor: palette.surface,
+    marginHorizontal: 20,
+    padding: 4,
     borderRadius: 14,
     marginBottom: 24,
     borderWidth: 1,
@@ -203,31 +196,30 @@ export const styles = StyleSheet.create({
   },
   tab: {
     flex: 1,
+    minHeight: 48,
+    justifyContent: 'center',
     paddingVertical: 10,
     alignItems: 'center',
     borderRadius: 10,
   },
   activeTab: {
-    backgroundColor: '#1e293b',
+    backgroundColor: palette.blue.surface,
   },
   tabText: {
-    color: '#64748b',
+    color: palette.secondary,
     fontWeight: '600',
     fontSize: 12,
   },
   activeTabText: {
-    color: 'white',
+    color: palette.blue.ink,
   },
   scrollView: {
     paddingHorizontal: 24,
   },
   card: {
-    backgroundColor: '#0f172a',
-    borderRadius: 24,
-    padding: 24,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#1e293b',
+    ...eventLayout.panel,
+    padding: 18,
+    marginBottom: 16,
   },
   cardHeaderRow: {
     flexDirection: 'row',
@@ -245,9 +237,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cardTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: 'white',
+    ...eventLayout.sectionTitle,
   },
   sectionLabel: {
     fontSize: 12,
@@ -262,8 +252,8 @@ export const styles = StyleSheet.create({
     marginBottom: 16,
   },
   label: {
-    color: '#64748b',
-    fontSize: 12,
+    color: palette.secondary,
+    fontSize: 14,
     fontWeight: '600',
     marginBottom: 8,
     marginLeft: 4,
@@ -271,8 +261,9 @@ export const styles = StyleSheet.create({
   input: {
     backgroundColor: '#020617',
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: '#334155',
     borderRadius: 12,
+    minHeight: 50,
     paddingHorizontal: 16,
     paddingVertical: 12,
     color: 'white',
