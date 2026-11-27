@@ -272,7 +272,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   resultOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(2, 6, 23, 0.95)',
     alignItems: 'center',
     justifyContent: 'center',

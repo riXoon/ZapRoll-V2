@@ -44,6 +44,8 @@ const checkAllEventDeadlines = async () => {
     const { data: openEvents, error } = await supabase
       .from('events')
       .select('id, pre_reg_deadline')
+      .eq('event_mode', 'legacy')
+      .eq('lifecycle', 'active')
       .eq('pre_reg_open', true)
       .not('pre_reg_deadline', 'is', null)
       .lt('pre_reg_deadline', now);
@@ -104,6 +106,7 @@ const getAllEvents = async (adminId) => {
         sessions(*),
         post_event_settings(*)
       `)
+      .eq('event_mode', 'legacy')
       .order('event_date', { ascending: false });
 
     if (error) {
@@ -117,6 +120,7 @@ const getAllEvents = async (adminId) => {
             registrations(count),
             post_event_settings(*)
           `)
+          .eq('event_mode', 'legacy')
           .order('event_date', { ascending: false });
         
         if (fallbackError) throw fallbackError;
@@ -211,6 +215,7 @@ const getEventById = async (eventId, adminId) => {
       attendance(*, registrations!participant_id(quota_id, reg_type, metadata))
     `)
     .eq('id', eventId)
+    .eq('event_mode', 'legacy')
     .single();
 
   if (error) {
@@ -366,6 +371,7 @@ const updateEvent = async (eventId, eventData, adminId, quotas = []) => {
       .from('events')
       .update(updateData)
     .eq('id', eventId)
+    .eq('event_mode', 'legacy')
     .select()
     .single();
 
@@ -671,6 +677,15 @@ const registerWalkin = async (eventId, adminId, walkinData) => {
   }
 };
 
+const requireOpenLegacyEvent = async eventId => {
+  const { data, error } = await supabase.from('events').select('lifecycle')
+    .eq('event_mode', 'legacy').eq('id', eventId).maybeSingle();
+  if (error) throw error;
+  if (!data || data.lifecycle !== 'active') {
+    throw Object.assign(new Error('This event is closed.'), { statusCode: 410 });
+  }
+};
+
 const getEvaluationTemplate = async (eventId, sessionType = 'am-eval') => {
   const { data, error } = await supabase
     .from('evaluation_templates')
@@ -834,6 +849,7 @@ const getPosterClearanceWhitelist = async (eventId) => {
 };
 
 module.exports = {
+  requireOpenLegacyEvent,
   getAllEvents,
   getEventById,
   createEvent,

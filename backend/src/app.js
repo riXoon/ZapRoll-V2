@@ -6,6 +6,7 @@ const errorMiddleware = require('./middleware/errorMiddleware');
 const healthRoutes = require('./routes/healthRoutes');
 const authRoutes = require('./routes/authRoutes');
 const eventRoutes = require('./routes/eventRoutes');
+const eventWorkspaceRoutes = require('./routes/eventWorkspaceRoutes');
 
 const app = express();
 
@@ -20,6 +21,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/health', healthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/events', eventRoutes);
+app.use('/api/event-workspace', eventWorkspaceRoutes);
 
 // Root Route
 app.get('/', (req, res) => {

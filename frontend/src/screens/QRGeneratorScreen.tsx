@@ -5,15 +5,17 @@ import { ArrowLeft, Download, Share2, ShieldCheck, Lock, Sun, Moon, CheckCircle,
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import QRCode from 'react-native-qrcode-svg';
-import DateTimePickerModal from "react-native-modal-datetime-picker";
-import ViewShot from "react-native-view-shot";
-import * as MediaLibrary from 'expo-media-library';
-import * as FileSystem from 'expo-file-system';
+import ViewShot, { type ViewShotRef } from "react-native-view-shot";
+import Constants, { ExecutionEnvironment } from 'expo-constants';
+import * as FileSystem from 'expo-file-system/legacy';
+
+const saveQrToFiles =
+  Platform.OS === 'android' && Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
 const QRGeneratorScreen = ({ route, navigation }: any) => {
   const insets = useSafeAreaInsets();
-  const qrRef = useRef<any>();
-  const viewShotRef = useRef<any>();
+  const qrRef = useRef<any>(null);
+  const viewShotRef = useRef<ViewShotRef>(null);
   const { roleName, title, capacity, url, showControls, type, eventName, venue, eventDate, isPreReg } = route.params || { roleName: 'General', capacity: '100', eventName: 'Synergy 2026' };
   const isUrlMode = !!url;
   const [isDownloading, setIsDownloading] = useState(false);
@@ -67,16 +69,31 @@ const QRGeneratorScreen = ({ route, navigation }: any) => {
     try {
       setIsDownloading(true);
       
-      // Request permissions
-      const { status } = await MediaLibrary.requestPermissionsAsync();
-      if (status !== 'granted') {
-        showAlert("Permission Required", "Please allow access to your gallery to save the QR code.", "error");
-        setIsDownloading(false);
+      if (saveQrToFiles) {
+        const storage = FileSystem.StorageAccessFramework;
+        const permission = await storage.requestDirectoryPermissionsAsync();
+        if (!permission.granted) return;
+
+        const uri = await viewShotRef.current?.capture?.();
+        if (!uri) throw new Error('Unable to capture the QR image.');
+
+        const encoding = FileSystem.EncodingType.Base64;
+        const image = await FileSystem.readAsStringAsync(uri, { encoding });
+        const destination = await storage.createFileAsync(permission.directoryUri, 'ZapRoll QR', 'image/png');
+        await storage.writeAsStringAsync(destination, image, { encoding });
+        showAlert("Saved to Files", "The QR image has been saved to your selected folder.", "success");
         return;
       }
 
-      // Capture the view
-      const uri = await viewShotRef.current.capture();
+      const MediaLibrary = await import('expo-media-library/legacy');
+      const { status } = await MediaLibrary.requestPermissionsAsync(false, ['photo']);
+      if (status !== 'granted') {
+        showAlert("Permission Required", "Please allow access to your gallery to save the QR code.", "error");
+        return;
+      }
+
+      const uri = await viewShotRef.current?.capture?.();
+      if (!uri) throw new Error('Unable to capture the QR image.');
       
       // Save to media library
       const asset = await MediaLibrary.createAssetAsync(uri);
@@ -201,7 +218,7 @@ const QRGeneratorScreen = ({ route, navigation }: any) => {
             ]}
           >
             <Download color="white" size={20} />
-            <Text style={styles.btnText}>Download PNG</Text>
+            <Text style={styles.btnText}>{saveQrToFiles ? 'Save PNG to Files' : 'Download PNG'}</Text>
           </TouchableOpacity>
           
           <TouchableOpacity 
@@ -222,7 +239,9 @@ const QRGeneratorScreen = ({ route, navigation }: any) => {
         </Animated.View>
 
         <Text style={styles.disclaimer}>
-          {isUrlMode 
+          {type === 'session-attendance'
+            ? 'Scan this code to open the attendance form for this session.'
+            : isUrlMode
             ? "When participants scan this, they will be redirected to the evaluation form in their mobile browser."
             : route.params?.isWalkIn 
               ? "Participants can scan this QR code at the venue entrance to access the digital walk-in registration form."

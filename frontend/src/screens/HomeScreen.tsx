@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, Image, RefreshControl } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { reportCache } from '../lib/reportCache';
 import { FeedbackModal } from '../components/FeedbackModal';
 import {
   Home as HomeIcon,
@@ -24,6 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import { API_URL } from '../config/api';
+import { type ScheduledDashboard, workspaceRequest } from '../lib/eventWorkspace';
 import { scale, verticalScale, moderateScale } from '../utils/responsive';
 
 const SkeletonItem = ({ width, height, borderRadius = 8, style }: any) => {
@@ -53,7 +54,9 @@ const SkeletonItem = ({ width, height, borderRadius = 8, style }: any) => {
 const CACHE_KEY = '@home_dashboard_cache';
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-const HomeScreen = ({ navigation }: any) => {
+const HomeScreen = ({ navigation, selectedEvent }: any) => {
+  const scheduled = selectedEvent?.event_mode === 'scheduled';
+  const [scheduledDashboard, setScheduledDashboard] = useState<ScheduledDashboard | null>(null);
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
   const [events, setEvents] = useState<any[]>([]);
@@ -99,8 +102,18 @@ const HomeScreen = ({ navigation }: any) => {
 
   const fetchDashboardData = async (forceRefresh = false) => {
     try {
+      if (scheduled) {
+        const dashboard = await workspaceRequest<ScheduledDashboard>(`/${selectedEvent.id}/dashboard`);
+        setScheduledDashboard(dashboard);
+        setEvents([selectedEvent]);
+        setStats(previous => ({ ...previous, totalPreReg: dashboard.preRegistered, checkedIn: dashboard.attendance }));
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const cacheKey = `${CACHE_KEY}:${session.user.id}:${selectedEvent?.id ?? 'default'}`;
       if (!forceRefresh) {
-        const cachedStr = await AsyncStorage.getItem(CACHE_KEY);
+        const cachedStr = reportCache.getItem(cacheKey);
         if (cachedStr) {
           const cached = JSON.parse(cachedStr);
           if (Date.now() - cached.timestamp < CACHE_TTL) {
@@ -121,10 +134,9 @@ const HomeScreen = ({ navigation }: any) => {
       }
 
       if (!refreshing) setLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
 
-      const response = await fetch(`${API_URL}/api/events`, {
+      const path = selectedEvent ? `/api/events/${selectedEvent.id}` : '/api/events';
+      const response = await fetch(`${API_URL}${path}`, {
         headers: {
           'Authorization': `Bearer ${session.access_token}`
         }
@@ -132,7 +144,7 @@ const HomeScreen = ({ navigation }: any) => {
       const result = await response.json();
 
       if (result.status === 'success') {
-        const fetchedEvents = result.data;
+        const fetchedEvents = selectedEvent ? [result.data] : result.data;
         setEvents(fetchedEvents);
         
         if (fetchedEvents.length > 0) {
@@ -264,7 +276,7 @@ const HomeScreen = ({ navigation }: any) => {
             const amOccupied = attendance.filter((a: any) => a.am_scanned_at && !isPoster(a)).length;
             const pmOccupied = attendance.filter((a: any) => a.pm_scanned_at && !isPoster(a)).length;
 
-            await AsyncStorage.setItem(CACHE_KEY, JSON.stringify({
+            reportCache.setItem(cacheKey, JSON.stringify({
               timestamp: Date.now(),
               events: fetchedEvents,
               stats: {
@@ -292,6 +304,7 @@ const HomeScreen = ({ navigation }: any) => {
       }
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
+      showAlert('Could not load event data', error instanceof Error ? error.message : 'Please try again.', 'error');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -332,15 +345,15 @@ const HomeScreen = ({ navigation }: any) => {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Top Header with Greeting */}
       <View style={styles.header}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: scale(16) }}>
+        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: scale(16) }}>
           <Image 
-            source={require('../../assets/Synergy-01.png')} 
+            source={scheduled ? require('../../assets/icon.png') : require('../../assets/Synergy-01.png')}
             style={styles.headerLogo}
             resizeMode="contain"
           />
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={styles.greeting}>{getTimeGreeting()},</Text>
-            <Text style={styles.userName}>System Admin</Text>
+            <Text style={styles.userName} numberOfLines={1}>{selectedEvent?.name ?? events[0]?.name ?? 'System Admin'}</Text>
           </View>
         </View>
         <View style={{ flexDirection: 'row', gap: scale(12) }}>
@@ -397,7 +410,7 @@ const HomeScreen = ({ navigation }: any) => {
                 </View>
                 <View>
                   <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>{stats.checkedIn}</Text>
-                  <Text style={styles.statLabel} numberOfLines={1} adjustsFontSizeToFit>Attendance</Text>
+                  <Text style={styles.statLabel} numberOfLines={1} adjustsFontSizeToFit>{scheduled ? 'Check-ins' : 'Attendance'}</Text>
                 </View>
               </View>
             </Animated.View>
@@ -415,6 +428,22 @@ const HomeScreen = ({ navigation }: any) => {
           </View>
 
           <View style={styles.analyticsCard}>
+            {scheduled ? <>
+              {scheduledDashboard?.sessions.slice(0, 3).map(session => {
+                const percent = Math.min(100, Math.round(session.count / session.capacity * 100));
+                return <View key={session.id} style={styles.progressSection}>
+                  <View style={styles.progressHeader}>
+                    <Text style={styles.progressLabel}>{session.title}</Text>
+                    <Text style={styles.progressPercent}>{percent}%</Text>
+                  </View>
+                  <View style={styles.progressBarBg}>
+                    <View style={[styles.progressBarFill, { width: `${percent}%` }]} />
+                  </View>
+                  <Text style={styles.progressSubtext}>{session.venue} · {session.count} / {session.capacity} checked in</Text>
+                </View>;
+              })}
+              {!scheduledDashboard?.sessions.length && <Text style={styles.progressSubtext}>No sessions configured yet.</Text>}
+            </> : <>
             {/* AM Session Venue Capacity Fill */}
             <View style={styles.progressSection}>
               <View style={styles.progressHeader}>
@@ -464,11 +493,12 @@ const HomeScreen = ({ navigation }: any) => {
                 </View>
               </View>
             </View>
+            </>}
           </View>
         </Animated.View>
 
         {/* Dedicated Evaluation Card */}
-        <Animated.View entering={FadeInDown.delay(250)} style={[styles.analyticsSection, { marginTop: verticalScale(16) }]}>
+        {!scheduled && <Animated.View entering={FadeInDown.delay(250)} style={[styles.analyticsSection, { marginTop: verticalScale(16) }]}>
           <View style={styles.sectionHeaderRow}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Star color="#8b5cf6" size={moderateScale(20)} />
@@ -508,12 +538,12 @@ const HomeScreen = ({ navigation }: any) => {
               </View>
             </View>
           </View>
-        </Animated.View>
+        </Animated.View>}
 
         {/* Featured Action Card */}
         <Animated.View entering={FadeInDown.delay(300)}>
           <TouchableOpacity
-            onPress={() => navigation.navigate('Config')}
+            onPress={() => navigation.navigate('Config', { section: scheduled ? 'setup' : 'pre-reg', showParticipants: false })}
             style={styles.featuredCard}
           >
             <View style={styles.featuredContent}>
@@ -534,7 +564,9 @@ const HomeScreen = ({ navigation }: any) => {
           <Text style={styles.sectionTitle}>Quick Access</Text>
           <View style={styles.menuGrid}>
             <TouchableOpacity
-              onPress={() => navigation.navigate('ParticipantList')}
+              onPress={() => scheduled
+                ? navigation.navigate('Config', { section: 'pre-reg', showParticipants: true })
+                : navigation.navigate('ParticipantList', { eventId: selectedEvent?.id })}
               style={styles.menuBtn}
             >
               <View style={[styles.menuIconBox, { backgroundColor: 'rgba(59, 130, 246, 0.1)' }]}>
@@ -544,17 +576,20 @@ const HomeScreen = ({ navigation }: any) => {
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => navigation.navigate('EvaluationForm', { eventId: events[0]?.id })}
+              onPress={() => scheduled
+                ? navigation.navigate('Config', { section: 'post-event', showParticipants: false })
+                : navigation.navigate('EvaluationForm', { eventId: events[0]?.id })}
               style={styles.menuBtn}
             >
               <View style={[styles.menuIconBox, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
                 <Edit3 color="#10b981" size={moderateScale(24)} />
               </View>
-              <Text style={styles.menuBtnText}>Form Builder</Text>
+              <Text style={styles.menuBtnText}>{scheduled ? 'Feedback Forms' : 'Form Builder'}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => navigation.navigate('EvaluationAnalytics')}
+              onPress={() => scheduled ? navigation.navigate('Analytics')
+                : navigation.navigate('EvaluationAnalytics', { eventId: selectedEvent?.id })}
               style={styles.menuBtn}
             >
               <View style={[styles.menuIconBox, { backgroundColor: 'rgba(245, 158, 11, 0.1)' }]}>

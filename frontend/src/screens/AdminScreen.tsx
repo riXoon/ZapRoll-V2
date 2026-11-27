@@ -5,7 +5,7 @@ import {
   ScrollView, 
   TextInput, 
   TouchableOpacity, 
-  StyleSheet, 
+
   Platform, 
   KeyboardAvoidingView,
   ActivityIndicator,
@@ -52,6 +52,11 @@ import DateTimePickerModal from "react-native-modal-datetime-picker";
 import { supabase } from '../lib/supabase';
 import { API_URL } from '../config/api';
 import { FeedbackModal } from '../components/FeedbackModal';
+import { styles } from '../components/eventSettingsStyles';
+import { SettingsHeading } from '../components/SettingsHeading';
+import ScheduledEventSettings from './ScheduledEventSettings';
+import { type SelectedEvent, useEventSelection } from '../lib/eventSelection';
+import { workspaceRequest } from '../lib/eventWorkspace';
 
 const SkeletonItem = ({ width, height, borderRadius = 8, style }: any) => {
   const opacity = useSharedValue(0.3);
@@ -77,7 +82,9 @@ const SkeletonItem = ({ width, height, borderRadius = 8, style }: any) => {
   );
 };
 
-const AdminScreen = ({ navigation }: any) => {
+const AdminScreen = ({ navigation, route, selectedEvent }: any) => {
+  const scheduled = selectedEvent?.event_mode === 'scheduled';
+  const { selectEvent } = useEventSelection();
   const insets = useSafeAreaInsets();
   const { width: screenWidth } = useWindowDimensions();
   
@@ -85,11 +92,17 @@ const AdminScreen = ({ navigation }: any) => {
   const isSmallScreen = screenWidth < 420;
   const isExtraSmall = screenWidth < 370;
 
-  const [activeTab, setActiveTab] = useState<'pre-reg' | 'event-day' | 'post-event'>('pre-reg');
+  const [activeTab, setActiveTab] = useState<'setup' | 'pre-reg' | 'event-day' | 'post-event'>(scheduled ? 'setup' : 'pre-reg');
+  useEffect(() => {
+    const section = route.params?.section;
+    if (section === 'pre-reg' || section === 'event-day' || section === 'post-event') setActiveTab(section);
+    if (section === 'setup') setActiveTab(scheduled ? 'setup' : 'pre-reg');
+  }, [route.params?.section, route.params?.showParticipants, scheduled]);
   const [isLocked, setIsLocked] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [eventId, setEventId] = useState<string | null>(null);
+  const [isArchived, setIsArchived] = useState(false);
   
   // State for Event Settings
   const [eventName, setEventName] = useState('Synergy 2026');
@@ -454,6 +467,7 @@ const handleTogglePreRegStatus = async (newValue: boolean) => {
   }, []);
 
   const fetchInitialData = async () => {
+    if (scheduled) return;
     try {
       setIsLoading(true);
       const { data: { session } } = await supabase.auth.getSession();
@@ -463,7 +477,8 @@ const handleTogglePreRegStatus = async (newValue: boolean) => {
       }
 
       console.log('Fetching event data from:', `${API_URL}/api/events`);
-      const response = await fetch(`${API_URL}/api/events`, {
+      const path = selectedEvent ? `/api/events/${selectedEvent.id}` : '/api/events';
+      const response = await fetch(`${API_URL}${path}`, {
         headers: { 'Authorization': `Bearer ${session.access_token}` }
       });
       
@@ -471,15 +486,16 @@ const handleTogglePreRegStatus = async (newValue: boolean) => {
       
       const result = await response.json();
 
-      if (result.status === 'success' && result.data.length > 0) {
-        const latestEvent = result.data[0];
+      const latestEvent = selectedEvent ? result.data : result.data?.[0];
+      if (result.status === 'success' && latestEvent) {
         console.log('Syncing existing event:', latestEvent.id);
         
         setEventId(latestEvent.id);
+        setIsArchived(latestEvent.lifecycle === 'archived');
         setIsLocked(latestEvent.is_locked || false);
         setEventName(latestEvent.name);
         setVenue(latestEvent.venue);
-        setTotalCapacity(latestEvent.total_capacity.toString());
+        setTotalCapacity(latestEvent.total_capacity?.toString() ?? '');
         setEventDate(new Date(latestEvent.event_date));
         setPreRegOpen(latestEvent.pre_reg_open !== undefined ? latestEvent.pre_reg_open : true);
         setPreRegDeadline(latestEvent.pre_reg_deadline ? new Date(latestEvent.pre_reg_deadline) : new Date());
@@ -615,6 +631,7 @@ const handleTogglePreRegStatus = async (newValue: boolean) => {
   }, [isLocked]);
 
   useEffect(() => {
+    if (scheduled) return;
     fetchInitialData();
 
     // 🚀 Enable Real-Time Sync
@@ -697,19 +714,31 @@ const handleTogglePreRegStatus = async (newValue: boolean) => {
     );
   };
 
+  const archiveLegacyEvent = () => {
+    if (!eventId) return;
+    showAlert('Archive event', `Close ${eventName} and keep its reports available?`, 'confirm', async () => {
+      try {
+        selectEvent(await workspaceRequest<SelectedEvent>(`/${eventId}/actions/archive`, {}));
+        setIsArchived(true);
+      } catch (cause) {
+        showAlert('Archive failed', cause instanceof Error ? cause.message : 'Please try again.', 'error');
+      }
+    }, 'Archive');
+  };
+
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={[styles.header, isSmallScreen && { paddingHorizontal: 16 }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
           <Image 
-            source={require('../../assets/Synergy-01.png')} 
+            source={scheduled ? require('../../assets/icon.png') : require('../../assets/Synergy-01.png')}
             style={[styles.headerLogo, isSmallScreen && { width: 32, height: 32 }]}
             resizeMode="contain"
           />
           <View style={{ flex: 1 }}>
             <Text style={[styles.headerTitle, isSmallScreen && { fontSize: 20 }]} numberOfLines={1}>Event Settings</Text>
-            <Text style={[styles.headerSubtitle, isSmallScreen && { fontSize: 12 }]} numberOfLines={1}>System administration</Text>
+            <Text style={[styles.headerSubtitle, isSmallScreen && { fontSize: 12 }]} numberOfLines={1}>{selectedEvent?.name || 'System administration'}</Text>
           </View>
         </View>
         <View style={{ flexDirection: 'row', gap: isSmallScreen ? 8 : 12 }}>
@@ -724,20 +753,28 @@ const handleTogglePreRegStatus = async (newValue: boolean) => {
 
       {/* Tab Switcher */}
       <View style={[styles.tabBar, isSmallScreen && { marginHorizontal: 16, padding: 4 }]}>
+        {scheduled && <TouchableOpacity
+          accessibilityRole="tab"
+          accessibilityState={{ selected: activeTab === 'setup' }}
+          onPress={() => { setActiveTab('setup'); navigation.setParams({ section: 'setup', showParticipants: false }); }}
+          style={[styles.tab, activeTab === 'setup' && styles.activeTab, isSmallScreen && { paddingVertical: 8 }]}
+        >
+          <Text style={[styles.tabText, activeTab === 'setup' && styles.activeTabText, isSmallScreen && { fontSize: 11 }]}>Setup</Text>
+        </TouchableOpacity>}
         <TouchableOpacity 
-          onPress={() => setActiveTab('pre-reg')}
+          onPress={() => { setActiveTab('pre-reg'); navigation.setParams({ section: 'pre-reg', showParticipants: false }); }}
           style={[styles.tab, activeTab === 'pre-reg' && styles.activeTab, isSmallScreen && { paddingVertical: 8 }]}
         >
           <Text style={[styles.tabText, activeTab === 'pre-reg' && styles.activeTabText, isSmallScreen && { fontSize: 11 }]}>Pre-Reg</Text>
         </TouchableOpacity>
         <TouchableOpacity 
-          onPress={() => setActiveTab('event-day')}
+          onPress={() => { setActiveTab('event-day'); navigation.setParams({ section: 'event-day', showParticipants: false }); }}
           style={[styles.tab, activeTab === 'event-day' && styles.activeTab, isSmallScreen && { paddingVertical: 8 }]}
         >
           <Text style={[styles.tabText, activeTab === 'event-day' && styles.activeTabText, isSmallScreen && { fontSize: 11 }]}>Registration</Text>
         </TouchableOpacity>
         <TouchableOpacity 
-          onPress={() => setActiveTab('post-event')}
+          onPress={() => { setActiveTab('post-event'); navigation.setParams({ section: 'post-event', showParticipants: false }); }}
           style={[styles.tab, activeTab === 'post-event' && styles.activeTab, isSmallScreen && { paddingVertical: 8 }]}
         >
           <Text style={[styles.tabText, activeTab === 'post-event' && styles.activeTabText, isSmallScreen && { fontSize: 11 }]}>Post-Event</Text>
@@ -745,9 +782,10 @@ const handleTogglePreRegStatus = async (newValue: boolean) => {
       </View>
 
       <ScrollView 
+        keyboardShouldPersistTaps="handled"
         style={[styles.scrollView, isSmallScreen && { paddingHorizontal: 16 }]} 
         showsVerticalScrollIndicator={false}
-        refreshControl={
+        refreshControl={scheduled ? undefined :
           <RefreshControl 
             refreshing={refreshing} 
             onRefresh={onRefresh} 
@@ -756,7 +794,26 @@ const handleTogglePreRegStatus = async (newValue: boolean) => {
           />
         }
       >
-        {isLoading && !refreshing ? (
+        {!scheduled && !isArchived && !isLoading && activeTab === 'post-event' && eventId && (
+          <TouchableOpacity style={styles.menuItem} onPress={archiveLegacyEvent}>
+            <Text style={styles.menuItemTitle}>Archive event</Text>
+          </TouchableOpacity>
+        )}
+        {scheduled ? (
+          <ScheduledEventSettings navigation={navigation} event={selectedEvent} activeTab={activeTab}
+            showParticipants={route.params?.showParticipants} />
+        ) : isArchived ? (
+          <View style={styles.card}>
+            <Text style={styles.headerTitle}>{eventName} is archived</Text>
+            {[
+              ['Participant records', 'ParticipantList'], ['Evaluations', 'EvaluationAnalytics'],
+              ['Certificate eligibility', 'Whitelist'], ['Poster clearance', 'PosterWhitelist'],
+            ].map(([label, screen]) => <TouchableOpacity key={screen} style={styles.menuItem}
+              onPress={() => navigation.navigate(screen, { eventId })}>
+              <Text style={styles.menuItemTitle}>{label}</Text>
+            </TouchableOpacity>)}
+          </View>
+        ) : isLoading && !refreshing ? (
           <Animated.View entering={FadeInDown.delay(100)}>
             <SkeletonItem width="100%" height={300} borderRadius={24} style={{ marginBottom: 24, marginTop: 16 }} />
             <SkeletonItem width="100%" height={200} borderRadius={24} style={{ marginBottom: 24 }} />
@@ -770,10 +827,7 @@ const handleTogglePreRegStatus = async (newValue: boolean) => {
             {/* Event Details Card */}
             <View style={[styles.card, isSmallScreen && { padding: 16 }]}>
               <View style={[styles.cardHeaderRow, isExtraSmall && { flexDirection: 'column', alignItems: 'flex-start', gap: 12 }]}>
-                <View style={styles.cardHeaderLeft}>
-                  <LayoutDashboard color="#3b82f6" size={isSmallScreen ? 18 : 20} />
-                  <Text style={[styles.cardTitle, isSmallScreen && { fontSize: 16 }]}>Event Identity</Text>
-                </View>
+                <SettingsHeading icon={LayoutDashboard} title="Event Identity" />
                 
                 <View style={[styles.headerActions, isExtraSmall && { width: '100%', justifyContent: 'space-between' }]}>
                   {/* Current Status Badge */}
@@ -851,10 +905,7 @@ const handleTogglePreRegStatus = async (newValue: boolean) => {
             {/* PRE-REGISTRATION EXECUTION RULES */}
             <View style={[styles.card, isSmallScreen && { padding: 16 }]}>
               <View style={[styles.cardHeaderRow, isExtraSmall && { flexDirection: 'column', alignItems: 'flex-start', gap: 12 }]}>
-                <View style={styles.cardHeaderLeft}>
-                  <Clock color="#3b82f6" size={isSmallScreen ? 18 : 20} />
-                  <Text style={[styles.cardTitle, isSmallScreen && { fontSize: 16 }]}>Execution Rules</Text>
-                </View>
+                <SettingsHeading icon={Clock} title="Execution Rules" />
                 <View style={[styles.statusBadge, { backgroundColor: preRegOpen ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)' }, isSmallScreen && { paddingHorizontal: 8 }]}>
                   <Text style={[styles.statusBadgeText, { color: preRegOpen ? '#10b981' : '#ef4444' }, isSmallScreen && { fontSize: 9 }]}>
                     {preRegOpen ? 'OPEN' : 'CLOSED'}
@@ -971,10 +1022,7 @@ const handleTogglePreRegStatus = async (newValue: boolean) => {
             {/* Role Capacities Card */}
             <View style={[styles.card, isSmallScreen && { padding: 16 }]}>
               <View style={styles.cardHeaderRow}>
-                <View style={styles.cardHeaderLeft}>
-                  <Users color="#3b82f6" size={isSmallScreen ? 18 : 20} />
-                  <Text style={[styles.cardTitle, isSmallScreen && { fontSize: 16 }]}>Role Quotas</Text>
-                </View>
+                <SettingsHeading icon={Users} title="Role Quotas" />
                 {!isLocked && (
                   <TouchableOpacity onPress={addRole} style={[styles.addButton, isSmallScreen && { width: 32, height: 32 }]}>
                     <Plus color="#3b82f6" size={isSmallScreen ? 16 : 18} />
@@ -1931,701 +1979,5 @@ const handleTogglePreRegStatus = async (newValue: boolean) => {
     </View>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#020617',
-  },
-  header: {
-    paddingHorizontal: 24,
-    paddingTop: 24,
-    paddingBottom: 20,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  headerLogo: {
-    width: 40,
-    height: 40,
-    marginRight: 12,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: '#64748b',
-  },
-  usageStats: {
-    fontSize: 12,
-    color: '#64748b',
-    marginTop: 6,
-  },
-  analyticsShortcut: {
-    borderColor: 'rgba(16, 185, 129, 0.3)',
-    backgroundColor: 'rgba(16, 185, 129, 0.05)',
-  },
-  preRegShortcut: {
-    borderColor: 'rgba(59, 130, 246, 0.3)',
-    backgroundColor: 'rgba(59, 130, 246, 0.05)',
-  },
-  analyticsPreview: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 20,
-    backgroundColor: 'rgba(15, 23, 42, 0.5)',
-    padding: 16,
-    borderRadius: 12,
-  },
-  previewItem: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  previewValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  previewLabel: {
-    fontSize: 9,
-    fontWeight: 'bold',
-    color: '#64748b',
-    marginTop: 4,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  previewDivider: {
-    width: 1,
-    height: 25,
-    backgroundColor: '#1e293b',
-  },
-  analyticsTapText: {
-    fontSize: 12,
-    color: '#10b981',
-    marginTop: 16,
-    textAlign: 'center',
-    fontWeight: '600',
-  },
-  turnoutStatsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 20,
-    backgroundColor: 'rgba(15, 23, 42, 0.5)',
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  turnoutStatItem: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  turnoutStatValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  turnoutStatLabel: {
-    fontSize: 10,
-    fontWeight: 'bold',
-    color: '#64748b',
-    marginTop: 4,
-    letterSpacing: 0.5,
-  },
-  helperText: {
-    fontSize: 12,
-    color: '#64748b',
-    marginBottom: 8,
-    fontStyle: 'italic',
-  },
-  infoBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(59, 130, 246, 0.05)',
-    padding: 12,
-    borderRadius: 12,
-    marginTop: 8,
-    gap: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(59, 130, 246, 0.1)',
-  },
-  infoText: {
-    color: '#3b82f6',
-    fontSize: 12,
-    flex: 1,
-  },
-  turnoutDivider: {
-    width: 1,
-    height: 30,
-    backgroundColor: '#1e293b',
-  },
-  turnoutFooter: {
-    marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#1e293b',
-  },
-  turnoutFooterText: {
-    fontSize: 13,
-    color: '#94a3b8',
-  },
-  roleBreakdownItem: {
-    paddingVertical: 12,
-    paddingHorizontal: 4,
-  },
-  roleBreakdownBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#1e293b',
-  },
-  roleBreakdownHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  roleBreakdownName: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  roleBreakdownStats: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  roleTurnoutPercent: {
-    fontSize: 10,
-    color: '#64748b',
-    marginTop: 6,
-    textAlign: 'right',
-  },
-  profileButton: {
-    width: 44,
-    height: 44,
-    backgroundColor: '#0f172a',
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  logoutButton: {
-    width: 44,
-    height: 44,
-    backgroundColor: 'rgba(239, 68, 68, 0.05)',
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.2)',
-  },
-  tabBar: {
-    flexDirection: 'row',
-    backgroundColor: '#0f172a',
-    marginHorizontal: 24,
-    padding: 6,
-    borderRadius: 14,
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 10,
-    alignItems: 'center',
-    borderRadius: 10,
-  },
-  activeTab: {
-    backgroundColor: '#1e293b',
-  },
-  tabText: {
-    color: '#64748b',
-    fontWeight: '600',
-    fontSize: 12,
-  },
-  activeTabText: {
-    color: 'white',
-  },
-  scrollView: {
-    paddingHorizontal: 24,
-  },
-  card: {
-    backgroundColor: '#0f172a',
-    borderRadius: 24,
-    padding: 24,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  cardHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  cardHeaderRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  sectionLabel: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#64748b',
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-    marginBottom: 16,
-    marginLeft: 4,
-  },
-  inputGroup: {
-    marginBottom: 16,
-  },
-  label: {
-    color: '#64748b',
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 8,
-    marginLeft: 4,
-  },
-  input: {
-    backgroundColor: '#020617',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    color: 'white',
-    fontSize: 16,
-  },
-  roleCard: {
-    backgroundColor: '#020617',
-    padding: 12,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  roleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  qrIconBtn: {
-    width: 40,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  usageInfo: {
-    flex: 2,
-    marginLeft: 8,
-  },
-  usageHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  usageLabel: {
-    color: '#64748b',
-    fontSize: 10,
-    fontWeight: 'bold',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  usageRemaining: {
-    color: '#10b981',
-    fontSize: 11,
-    fontWeight: 'bold',
-  },
-  progressBarBg: {
-    height: 6,
-    backgroundColor: '#0f172a',
-    borderRadius: 3,
-    width: '100%',
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  progressBarFill: {
-    height: '100%',
-    borderRadius: 3,
-  },
-  roleUsageStats: {
-    color: '#475569',
-    fontSize: 10,
-    marginTop: 4,
-    textAlign: 'right',
-    fontWeight: '500',
-  },
-  deleteBtn: {
-    width: 40,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  menuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#0f172a',
-    padding: 16,
-    borderRadius: 20,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  menuItemLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  menuIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 16,
-  },
-  menuItemTitle: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  menuItemSubtitle: {
-    color: '#64748b',
-    fontSize: 12,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-    gap: 6,
-  },
-  statusBadgeEdit: {
-    backgroundColor: 'rgba(59, 130, 246, 0.05)',
-  },
-  statusBadgeLocked: {
-    backgroundColor: 'rgba(16, 185, 129, 0.05)',
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  statusBadgeText: {
-    fontSize: 11,
-    fontWeight: 'bold',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  actionToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-    gap: 6,
-    borderWidth: 1,
-  },
-  actionToggleLock: {
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    borderColor: 'rgba(16, 185, 129, 0.2)',
-  },
-  actionToggleUnlock: {
-    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-    borderColor: 'rgba(59, 130, 246, 0.2)',
-  },
-  actionToggleTextGreen: {
-    color: '#10b981',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  actionToggleTextBlue: {
-    color: '#3b82f6',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  disabledInput: {
-    backgroundColor: 'rgba(15, 23, 42, 0.5)',
-    color: '#475569',
-    borderColor: 'transparent',
-  },
-  controlRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#020617',
-    padding: 16,
-    borderRadius: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  controlLabel: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  controlSubtitle: {
-    color: '#64748b',
-    fontSize: 12,
-  },
-  toggleBtn: {
-    width: 44,
-    height: 24,
-    borderRadius: 12,
-    padding: 2,
-  },
-  toggleCircle: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: 'white',
-  },
-  summaryBox: {
-    flexDirection: 'row',
-    backgroundColor: '#020617',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  summaryBoxError: {
-    borderColor: 'rgba(239, 68, 68, 0.3)',
-    backgroundColor: 'rgba(239, 68, 68, 0.05)',
-  },
-  footerCredits: {
-    alignItems: 'center',
-    marginTop: 20,
-    marginBottom: 40,
-  },
-  overallStatsBox: {
-    backgroundColor: '#020617',
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  overallStatsFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'baseline',
-    marginTop: 10,
-  },
-  overallStatsValue: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: 'white',
-  },
-  overallStatsTarget: {
-    color: '#64748b',
-    fontSize: 12,
-    fontWeight: 'bold',
-    textTransform: 'uppercase',
-  },
-  devLabel: {
-    color: '#64748b',
-    fontSize: 10,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: 4,
-  },
-  devNames: {
-    color: '#475569',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  saveButton: {
-    backgroundColor: '#3b82f6',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    paddingVertical: 18,
-    borderRadius: 18,
-    marginBottom: 32,
-    shadowColor: '#3b82f6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 6,
-  },
-  saveButtonDisabled: {
-    opacity: 0.6,
-    backgroundColor: '#1e293b',
-  },
-  saveButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  summaryItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  summaryLabel: {
-    fontSize: 10,
-    color: '#64748b',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  summaryValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  summaryDivider: {
-    width: 1,
-    height: '100%',
-    backgroundColor: '#1e293b',
-    marginHorizontal: 12,
-  },
-  rulesInfoBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-    padding: 12,
-    borderRadius: 12,
-    marginTop: 8,
-    gap: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(59, 130, 246, 0.1)',
-  },
-  rulesInfoText: {
-    color: '#94a3b8',
-    fontSize: 12,
-    flex: 1,
-    lineHeight: 18,
-  },
-  whitelistCard: {
-    backgroundColor: '#0f172a',
-    borderRadius: 20,
-    padding: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.2)',
-  },
-  whitelistLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-  },
-  whitelistIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  whitelistTitle: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 2,
-  },
-  whitelistSubtitle: {
-    color: '#64748b',
-    fontSize: 13,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  modalContent: {
-    backgroundColor: '#0f172a',
-    borderRadius: 32,
-    padding: 32,
-    width: '100%',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    alignItems: 'center',
-  },
-  modalTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: 'white',
-    marginBottom: 8,
-  },
-  modalSubtitle: {
-    fontSize: 14,
-    color: '#64748b',
-    textAlign: 'center',
-    marginBottom: 32,
-  },
-  sessionGrid: {
-    flexDirection: 'row',
-    gap: 16,
-    marginBottom: 32,
-  },
-  sessionChoice: {
-    flex: 1,
-    backgroundColor: '#020617',
-    borderRadius: 24,
-    padding: 24,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  sessionIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-  },
-  sessionName: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  cancelModalBtn: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-  },
-  cancelModalBtnText: {
-    color: '#64748b',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-});
 
 export default AdminScreen;

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Expo Mobile Developer"
+  short_description: "Design, build, and upgrade React Native apps with Expo"
+  default_prompt: "Use $expo-mobile-developer to design, build, or safely upgrade my React Native and Expo app."

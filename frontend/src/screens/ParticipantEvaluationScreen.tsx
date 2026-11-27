@@ -164,7 +164,7 @@ const ParticipantEvaluationScreen = ({ navigation, route }: any) => {
           </Text>
           <TouchableOpacity 
             style={styles.doneBtn}
-            onPress={() => navigation.navigate('Home')}
+            onPress={() => navigation.popTo('MainApp', { screen: 'Home' })}
           >
             <Text style={styles.doneBtnText}>Back to Home</Text>
           </TouchableOpacity>
@@ -703,7 +703,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   signatureHint: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     opacity: 0.5,

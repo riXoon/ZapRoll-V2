@@ -38,13 +38,7 @@ const createEvent = async (req, res, next) => {
     const existingEvents = await eventModel.getAllEvents(adminId);
     
     if (existingEvents && existingEvents.length > 0) {
-      // If one exists, update it instead!
-      const eventId = existingEvents[0].id;
-      const updatedEvent = await eventModel.updateEvent(eventId, {
-        name, venue, event_date, total_capacity, 
-        pre_reg_open, pre_reg_deadline, is_locked, evaluation_base_url
-      }, adminId, quotas);
-      return res.status(200).json({ status: 'success', data: updatedEvent });
+      return res.status(409).json({ status: 'error', message: 'Create new events from the Events tab.' });
     }
 
     // 2. Otherwise, create the first one
@@ -239,6 +233,7 @@ const getEvaluationTemplate = async (req, res, next) => {
   try {
     const { id } = req.params;
     const { sessionType } = req.query;
+    await eventModel.requireOpenLegacyEvent(id);
     const template = await eventModel.getEvaluationTemplate(id, sessionType);
     res.status(200).json({ status: 'success', data: template });
   } catch (err) {

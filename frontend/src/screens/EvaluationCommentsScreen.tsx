@@ -11,7 +11,7 @@ import {
   Platform,
   useWindowDimensions
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { reportCache } from '../lib/reportCache';
 import { 
   ArrowLeft, 
   Search, 
@@ -102,6 +102,7 @@ const CommentRow = React.memo(({ item, isAm }: any) => {
 });
 
 const EvaluationCommentsScreen = ({ route, navigation }: any) => {
+  const requestedEventId = route.params?.eventId;
   const insets = useSafeAreaInsets();
   const { width: screenWidth } = useWindowDimensions();
   const isSmallScreen = screenWidth < 380;
@@ -170,8 +171,11 @@ const EvaluationCommentsScreen = ({ route, navigation }: any) => {
 
   const loadCachedComments = async (forceRefresh = false) => {
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const cacheKey = `${CACHE_KEY}:${session.user.id}:${requestedEventId || 'legacy'}`;
       if (!forceRefresh) {
-        const cachedStr = await AsyncStorage.getItem(CACHE_KEY);
+        const cachedStr = reportCache.getItem(cacheKey);
         if (cachedStr) {
           const cached = JSON.parse(cachedStr);
           if (Date.now() - cached.timestamp < CACHE_TTL) {
@@ -215,7 +219,8 @@ const EvaluationCommentsScreen = ({ route, navigation }: any) => {
         setRefreshing(false);
         return;
       }
-      const activeEvent = eventData.data[0];
+      const activeEvent = requestedEventId ? eventData.data.find((item: any) => item.id === requestedEventId) : eventData.data[0];
+      if (!activeEvent) return;
       setEvent(activeEvent);
 
       // 2. Fetch Templates
@@ -243,7 +248,7 @@ const EvaluationCommentsScreen = ({ route, navigation }: any) => {
       setComments(parsed);
 
       // Update cache
-      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify({
+      reportCache.setItem(`${CACHE_KEY}:${session.user.id}:${requestedEventId || 'legacy'}`, JSON.stringify({
         timestamp: Date.now(),
         event: activeEvent,
         templates: tMap,

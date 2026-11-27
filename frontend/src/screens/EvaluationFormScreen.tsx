@@ -35,6 +35,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { API_URL } from '../config/api';
 import { FeedbackModal } from '../components/FeedbackModal';
+import { workspaceRequest } from '../lib/eventWorkspace';
 
 type QuestionType = 'rating' | 'text' | 'choice' | 'likert' | 'privacy' | 'signature' | 'header';
 
@@ -65,7 +66,12 @@ const LIKERT_SCALES = {
 };
 
 const EvaluationFormScreen = ({ navigation, route }: any) => {
-  const { eventId, sessionType = 'am-eval' } = route.params || {};
+  const { eventId, eventName, sessionId, sessionTitle, roleId, roleName, formType, sessionType = 'am-eval' } = route.params || {};
+  const attendance = formType === 'attendance';
+  const formTitle = roleId ? 'Pre-Registration Form' : attendance ? 'Attendance Form' : 'Evaluation Form';
+  const targetName = roleId ? roleName : sessionTitle;
+  const workspacePath = roleId ? `/${eventId}/roles/${roleId}/pre-registration-template`
+    : sessionId ? `/${eventId}/sessions/${sessionId}/${attendance ? 'attendance' : 'evaluation'}-template` : null;
   const insets = useSafeAreaInsets();
   
   const [pages, setPages] = useState<Page[]>([
@@ -74,7 +80,7 @@ const EvaluationFormScreen = ({ navigation, route }: any) => {
       title: 'Intro & Privacy', 
       description: 'Welcome participants and get their consent.',
       questions: [
-        { id: 'q_1', type: 'header', label: 'Evaluation Form', statements: [], required: false },
+        { id: 'q_1', type: 'header', label: formTitle, statements: [], required: false },
         { id: 'q_2', type: 'privacy', label: 'Data Privacy Notice', statements: [], required: true }
       ] 
     }
@@ -82,7 +88,9 @@ const EvaluationFormScreen = ({ navigation, route }: any) => {
   
   const [activePageIndex, setActivePageIndex] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(Boolean(eventId));
+  const [loadError, setLoadError] = useState('');
+  const saving = React.useRef(false);
   const [showJsonModal, setShowJsonModal] = useState(false);
 
   // Feedback Modal State
@@ -117,7 +125,7 @@ const EvaluationFormScreen = ({ navigation, route }: any) => {
       hasFetched.current = true;
       fetchTemplate();
     }
-  }, [eventId]);
+  }, [eventId, roleId, sessionId, sessionType, formType]);
 
   const copyToClipboard = (text: string) => {
     // Clipboard removed due to RN 0.76+ incompatibility
@@ -127,6 +135,15 @@ const EvaluationFormScreen = ({ navigation, route }: any) => {
   const fetchTemplate = async () => {
     try {
       setIsLoading(true);
+      setLoadError('');
+      if (workspacePath) {
+        const template = await workspaceRequest<{ questions: Page[] } | null>(workspacePath);
+        if (template?.questions.length) {
+          setPages(template.questions);
+          setActivePageIndex(0);
+        }
+        return;
+      }
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
@@ -154,6 +171,7 @@ const EvaluationFormScreen = ({ navigation, route }: any) => {
         }
       }
     } catch (error) {
+      if (workspacePath) setLoadError(error instanceof Error ? error.message : 'Could not load the form template.');
       console.error('Error fetching template:', error);
     } finally {
       setIsLoading(false);
@@ -263,13 +281,31 @@ const EvaluationFormScreen = ({ navigation, route }: any) => {
   };
 
   const handleSave = async () => {
+    if (saving.current || isLoading || loadError) return;
     if (!eventId) {
       showAlert("Error", "No event ID found.", "error");
       return;
     }
 
+    saving.current = true;
     try {
       setIsSaving(true);
+      if (workspacePath) {
+        const saved = await workspaceRequest<{ url: string | null; shared?: boolean }>(workspacePath, {
+          title: pages[0].title || formTitle, questions: pages,
+        });
+        if (saved.url) {
+          const url = saved.url;
+          showAlert('Form saved', url, 'confirm', () => navigation.navigate('QRGenerator', {
+            url, title: saved.shared ? 'Pre-registration' : targetName || formTitle, eventName,
+            type: roleId ? 'pre-reg' : attendance ? 'session-attendance' : 'session-eval',
+            isPreReg: !!roleId,
+          }), 'Show QR');
+        } else {
+          showAlert('Form saved', 'Set ZAPROLL_WEBFORM_BASE_URL on the backend to generate a webform link.', 'success');
+        }
+        return;
+      }
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
@@ -298,21 +334,34 @@ const EvaluationFormScreen = ({ navigation, route }: any) => {
     } catch (err: any) {
       showAlert("Error", err.message || "Failed to save template", "error");
     } finally {
+      saving.current = false;
       setIsSaving(false);
     }
   };
 
   const handleCopyJson = async () => {
     try {
-      const jsonString = JSON.stringify({ eventId, questions: pages }, null, 2);
+      const jsonString = JSON.stringify({ eventId, sessionId, roleId, questions: pages }, null, 2);
       await Share.share({
         message: jsonString,
-        title: 'ZapRoll Evaluation Schema'
+        title: `ZapRoll ${formTitle} Schema`
       });
     } catch (error) {
       showAlert("Error", "Could not share JSON structure.", "error");
     }
   };
+
+  if (loadError) {
+    return <View style={[styles.container, { padding: 24, paddingTop: insets.top + 24, gap: 16 }]}>
+      <Text accessibilityRole="alert" style={{ color: '#fca5a5' }}>{loadError}</Text>
+      <TouchableOpacity accessibilityRole="button" onPress={fetchTemplate} style={styles.saveBtn}>
+        <Text style={styles.saveBtnText}>Try again</Text>
+      </TouchableOpacity>
+      <TouchableOpacity accessibilityRole="button" onPress={() => navigation.goBack()} style={styles.saveBtn}>
+        <Text style={styles.saveBtnText}>Back</Text>
+      </TouchableOpacity>
+    </View>;
+  }
 
   if (isLoading || !Array.isArray(pages) || !pages[activePageIndex]) {
     return (
@@ -354,6 +403,8 @@ const EvaluationFormScreen = ({ navigation, route }: any) => {
           </TouchableOpacity>
         </View>
       </View>
+
+      {!!targetName && <Text style={{ color: '#94a3b8', marginHorizontal: 24, marginBottom: 12 }}>{targetName}</Text>}
 
       {/* JSON Structure Modal */}
       <Modal

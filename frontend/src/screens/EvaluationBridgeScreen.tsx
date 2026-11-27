@@ -128,7 +128,7 @@ const EvaluationBridgeScreen = ({ navigation, route }: any) => {
             </Text>
             <TouchableOpacity 
               style={styles.doneButton}
-              onPress={() => navigation.navigate('Home')}
+              onPress={() => navigation.popTo('MainApp', { screen: 'Home' })}
             >
               <Text style={styles.doneButtonText}>Back to Home</Text>
             </TouchableOpacity>

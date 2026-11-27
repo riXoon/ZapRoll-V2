@@ -1,0 +1,4 @@
+interface:
+  display_name: "Systems Analyst and Architect"
+  short_description: "Plan features, architecture, and implementation"
+  default_prompt: "Use $systems-analyst-architect to turn my feature idea into a buildable plan and coordinate Expo implementation."

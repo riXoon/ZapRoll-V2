@@ -1,7 +1,9 @@
+/// <reference types="jest" />
+
 import { exportToPDF, exportToExcel, exportRegistryToPDF, exportRegistryToExcel, exportPosterClearanceToPDF, exportPosterClearanceToExcel } from '../exportUtils';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 
 // Mock Expo Modules
@@ -13,7 +15,7 @@ jest.mock('expo-sharing', () => ({
   shareAsync: jest.fn().mockResolvedValue(true),
 }));
 
-jest.mock('expo-file-system', () => ({
+jest.mock('expo-file-system/legacy', () => ({
   documentDirectory: 'file://mock/document/',
   cacheDirectory: 'file://mock/cache/',
   moveAsync: jest.fn().mockResolvedValue(true),
@@ -24,11 +26,6 @@ jest.mock('expo-file-system', () => ({
     requestDirectoryPermissionsAsync: jest.fn().mockResolvedValue({ granted: false }),
     createFileAsync: jest.fn().mockResolvedValue('file://mock/saf/document.pdf'),
   },
-}));
-
-jest.mock('react-native', () => ({
-  Platform: { OS: 'ios' },
-  Alert: { alert: jest.fn() },
 }));
 
 describe('exportUtils', () => {

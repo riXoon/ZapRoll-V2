@@ -26,7 +26,7 @@ import {
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown, withRepeat, withTiming, useAnimatedStyle, useSharedValue, Layout } from 'react-native-reanimated';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { reportCache } from '../lib/reportCache';
 import { supabase } from '../lib/supabase';
 import { API_URL } from '../config/api';
 import { exportToPDF, exportToExcel, exportPosterClearanceToPDF, exportPosterClearanceToExcel } from '../utils/exportUtils';
@@ -194,10 +194,12 @@ const PosterWhitelistScreen = ({ navigation, route }: any) => {
 
   const fetchResponses = async (forceRefresh = false) => {
     try {
-      const cacheKey = `${CACHE_KEY_PREFIX}${eventId}`;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session || !eventId) return;
+      const cacheKey = `${CACHE_KEY_PREFIX}${session.user.id}:${eventId}`;
 
       if (!refreshing && !forceRefresh) {
-        const cachedDataStr = await AsyncStorage.getItem(cacheKey);
+        const cachedDataStr = reportCache.getItem(cacheKey);
         if (cachedDataStr) {
           const cachedData = JSON.parse(cachedDataStr);
           const now = new Date().getTime();
@@ -209,9 +211,6 @@ const PosterWhitelistScreen = ({ navigation, route }: any) => {
           }
         }
       }
-
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session || !eventId) return;
 
       const response = await fetch(`${API_URL}/api/events/${eventId}/poster-clearance-whitelist`, {
         headers: { 'Authorization': `Bearer ${session.access_token}` }
@@ -235,7 +234,7 @@ const PosterWhitelistScreen = ({ navigation, route }: any) => {
         setEventName(fetchedEventName);
       }
 
-      await AsyncStorage.setItem(cacheKey, JSON.stringify({
+      reportCache.setItem(cacheKey, JSON.stringify({
         timestamp: new Date().getTime(),
         responses: fetchedResponses,
         eventName: fetchedEventName

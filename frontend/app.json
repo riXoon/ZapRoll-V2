@@ -6,12 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#020617"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rixoon.zaproll"
@@ -33,7 +27,23 @@
       }
     },
     "plugins": [
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#020617"
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "granularPermissions": ["photo"],
+          "photosPermission": "Allow ZapRoll to access photos when saving QR codes.",
+          "savePhotosPermission": "Allow ZapRoll to save QR codes to your photos."
+        }
+      ]
     ],
     "owner": "senec4"
   }

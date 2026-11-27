@@ -23,6 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useWindowDimensions } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { API_URL } from '../config/api';
+import { type ScheduledDashboard, workspaceRequest } from '../lib/eventWorkspace';
 import { useIsFocused } from '@react-navigation/native';
 
 const SkeletonItem = ({ width, height, borderRadius = 8, style }: any) => {
@@ -49,7 +50,9 @@ const SkeletonItem = ({ width, height, borderRadius = 8, style }: any) => {
   );
 };
 
-const AnalyticsScreen = ({ navigation }: any) => {
+const AnalyticsScreen = ({ navigation, selectedEvent }: any) => {
+  const scheduled = selectedEvent?.event_mode === 'scheduled';
+  const [dashboard, setDashboard] = useState<ScheduledDashboard | null>(null);
   const { width } = useWindowDimensions();
   const isSmallScreen = width < 420;
   const isExtraSmall = width < 370;
@@ -86,17 +89,28 @@ const AnalyticsScreen = ({ navigation }: any) => {
 
   const fetchAnalyticsData = async () => {
     try {
+      if (scheduled) {
+        const data = await workspaceRequest<ScheduledDashboard>(`/${selectedEvent.id}/dashboard`);
+        setDashboard(data);
+        setRecentScans(data.recent.map(scan => ({
+          ...scan, status: 'In', time: new Date(scan.checkedInAt).toLocaleTimeString([], {
+            timeZone: selectedEvent.timezone, hour: 'numeric', minute: '2-digit',
+          }),
+        })));
+        return;
+      }
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
       // 1. Fetch Latest Event
-      const eventRes = await fetch(`${API_URL}/api/events`, {
+      const path = selectedEvent ? `/api/events/${selectedEvent.id}` : '/api/events';
+      const eventRes = await fetch(`${API_URL}${path}`, {
         headers: { 'Authorization': `Bearer ${session.access_token}` }
       });
       const eventData = await eventRes.json();
       
-      if (eventData.status === 'success' && eventData.data.length > 0) {
-        const activeEvent = eventData.data[0];
+      const activeEvent = selectedEvent ? eventData.data : eventData.data?.[0];
+      if (eventData.status === 'success' && activeEvent) {
         setEvent(activeEvent);
 
         // 2. Fetch ALL registrations for this event to calculate breakdowns
@@ -141,6 +155,7 @@ const AnalyticsScreen = ({ navigation }: any) => {
       }
     } catch (error) {
       console.error('Analytics Fetch Error:', error);
+      showAlert('Could not load analytics', error instanceof Error ? error.message : 'Please try again.', 'error');
     } finally {
       setIsLoading(false);
       setRefreshing(false);
@@ -298,7 +313,7 @@ const AnalyticsScreen = ({ navigation }: any) => {
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
             <Text style={[styles.headerTitle, isSmallScreen && { fontSize: 22 }]} numberOfLines={1}>Analytics</Text>
-            <Text style={[styles.headerSubtitle, isSmallScreen && { fontSize: 12 }]}>Drill-down Reports</Text>
+            <Text style={[styles.headerSubtitle, isSmallScreen && { fontSize: 12 }]}>{selectedEvent?.name ?? event?.name ?? 'Drill-down Reports'}</Text>
           </View>
         </View>
         <View style={[styles.headerActions, isExtraSmall && { gap: 8 }]}>
@@ -335,6 +350,7 @@ const AnalyticsScreen = ({ navigation }: any) => {
         ) : (
           <>
             {/* Category Switcher */}
+        {!scheduled && <>
         <View style={[styles.categoryBar, isSmallScreen && { marginBottom: 16 }]}>
           <TouchableOpacity 
             onPress={() => setActiveCategory('Student')}
@@ -376,22 +392,27 @@ const AnalyticsScreen = ({ navigation }: any) => {
             ))
           )}
         </ScrollView>
+        </>}
 
         {/* Breakdown Chart */}
         <Animated.View layout={Layout.springify()} entering={FadeInDown.delay(100)} style={[styles.chartCard, isSmallScreen && { padding: 16 }]}>
           <View style={styles.chartHeader}>
             <Text style={[styles.chartTitle, isSmallScreen && { fontSize: 16 }]}>
-              {activeCategory} {selectedYear === '4th Year' ? 'Roles' : 'Breakdown'}
+              {scheduled ? 'Participant Breakdown' : `${activeCategory} ${selectedYear === '4th Year' ? 'Roles' : 'Breakdown'}`}
             </Text>
             <Text style={styles.chartSubTitle}>
-              by {activeCategory === 'Student' 
+              by {scheduled ? 'Event Role' : activeCategory === 'Student'
                 ? (selectedYear === '4th Year' ? 'Student Role' : 'Year Level') 
                 : 'Department'}
             </Text>
           </View>
           
           <View style={styles.barChartContainer}>
-            {(activeCategory === 'Student' ? studentBreakdown : employeeBreakdown).map((item, idx) => (
+            {scheduled && !dashboard?.roles.length && <Text style={styles.chartSubTitle}>No roles configured yet.</Text>}
+            {(scheduled ? dashboard?.roles.map(role => ({
+              label: role.name, count: role.count, color: '#3b82f6',
+              val: dashboard.participants ? Math.min(100, Math.round(role.count / dashboard.participants * 100)) : 0,
+            })) ?? [] : activeCategory === 'Student' ? studentBreakdown : employeeBreakdown).map((item, idx) => (
               <View key={item.label} style={styles.chartRow}>
                 <Text style={[styles.barLabel, isSmallScreen && { width: 110, fontSize: 10 }]} numberOfLines={1}>{item.label}</Text>
                 <View style={styles.barBg}>
@@ -412,25 +433,46 @@ const AnalyticsScreen = ({ navigation }: any) => {
         <View style={[styles.summaryRow, isExtraSmall && { flexDirection: 'column' }]}>
           <View style={[styles.summaryCard, isSmallScreen && { padding: 16 }]}>
             <Text style={[styles.summaryLabel, isSmallScreen && { fontSize: 11 }]}>
-              {activeCategory === 'Student' && selectedYear !== 'All' ? selectedYear : 
+              {scheduled ? 'Registrations' : activeCategory === 'Student' && selectedYear !== 'All' ? selectedYear :
                activeCategory === 'Employee' && selectedDept !== 'All' ? selectedDept : 
                `Total ${activeCategory}s`}
             </Text>
-            <Text style={[styles.summaryValue, isSmallScreen && { fontSize: 24 }]}>{filteredStats.total}</Text>
+            <Text style={[styles.summaryValue, isSmallScreen && { fontSize: 24 }]}>{scheduled ? dashboard?.participants ?? 0 : filteredStats.total}</Text>
             <View style={styles.trendUp}>
               <Activity color="#3b82f6" size={12} />
-              <Text style={[styles.trendText, { color: '#3b82f6' }]}>Filtered View</Text>
+              <Text style={[styles.trendText, { color: '#3b82f6' }]}>{scheduled ? 'All Roles' : 'Filtered View'}</Text>
             </View>
           </View>
           <View style={[styles.summaryCard, isSmallScreen && { padding: 16 }]}>
-            <Text style={[styles.summaryLabel, isSmallScreen && { fontSize: 11 }]}>Participation</Text>
-            <Text style={[styles.summaryValue, isSmallScreen && { fontSize: 24 }]}>{filteredStats.participation}%</Text>
+            <Text style={[styles.summaryLabel, isSmallScreen && { fontSize: 11 }]}>{scheduled ? 'Check-ins' : 'Participation'}</Text>
+            <Text style={[styles.summaryValue, isSmallScreen && { fontSize: 24 }]}>{scheduled ? dashboard?.attendance ?? 0 : `${filteredStats.participation}%`}</Text>
             <View style={styles.trendUp}>
               <ArrowUpRight color="#10b981" size={12} />
-              <Text style={styles.trendText}>In-Group</Text>
+              <Text style={styles.trendText}>{scheduled ? 'All Sessions' : 'In-Group'}</Text>
             </View>
           </View>
         </View>
+
+        {scheduled && <Animated.View entering={FadeInDown.delay(125)} style={styles.chartCard}>
+          <View style={styles.chartHeader}>
+            <Text style={styles.chartTitle}>Attendance by Session</Text>
+            <Text style={styles.chartSubTitle}>Check-ins and capacity</Text>
+          </View>
+          {!dashboard?.sessions.length && <Text style={styles.chartSubTitle}>No sessions configured yet.</Text>}
+          {dashboard?.sessions.map(session => {
+            const fill = Math.min(100, Math.round(session.count / session.capacity * 100));
+            const day = new Date(session.startsAt).toLocaleDateString([], {
+              timeZone: selectedEvent.timezone, month: 'short', day: 'numeric',
+            });
+            return <View key={session.id} style={{ marginBottom: 12 }}>
+              <Text style={styles.chartSubTitle}>{session.title} · {day} · {session.venue}</Text>
+              <View style={styles.chartRow}>
+                <View style={styles.barBg}><View style={[styles.barFill, { width: `${fill}%`, backgroundColor: '#3b82f6' }]} /></View>
+                <Text style={styles.barValue}>{session.count}/{session.capacity}</Text>
+              </View>
+            </View>;
+          })}
+        </Animated.View>}
         
         {/* Evaluation Insights Card */}
         <Animated.View entering={FadeInDown.delay(150)} style={styles.evaluationCard}>
@@ -438,11 +480,13 @@ const AnalyticsScreen = ({ navigation }: any) => {
             <Activity color="#8b5cf6" size={24} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.evalTitle}>Evaluation Insights</Text>
-            <Text style={styles.evalSub}>Sentiment analysis & feedback summary</Text>
+            <Text style={styles.evalTitle}>{scheduled ? 'Session Feedback' : 'Evaluation Insights'}</Text>
+            <Text style={styles.evalSub}>{scheduled ? `${dashboard?.feedback ?? 0} responses` : 'Sentiment analysis & feedback summary'}</Text>
           </View>
           <TouchableOpacity 
-            onPress={() => navigation.navigate('EvaluationAnalytics')}
+            onPress={() => scheduled
+              ? navigation.navigate('Config', { section: 'post-event', showParticipants: false })
+              : navigation.navigate('EvaluationAnalytics', { eventId: selectedEvent?.id })}
             style={styles.evalGoBtn}
           >
             <Text style={styles.evalGoText}>Explore</Text>
@@ -455,7 +499,9 @@ const AnalyticsScreen = ({ navigation }: any) => {
           <View style={styles.sectionHeaderRow}>
             <Text style={styles.sectionTitle}>Live Activity</Text>
             <TouchableOpacity 
-              onPress={() => navigation.navigate('ParticipantList')}
+              onPress={() => scheduled
+                ? navigation.navigate('Config', { section: 'pre-reg', showParticipants: true })
+                : navigation.navigate('ParticipantList', { eventId: selectedEvent?.id })}
               style={styles.viewDetailsBtn}
             >
               <Text style={styles.viewAll}>View Full List</Text>

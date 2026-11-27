@@ -8,6 +8,7 @@ interface InputProps {
   value: string;
   onChangeText: (text: string) => void;
   secureTextEntry?: boolean;
+  editable?: boolean;
   keyboardType?: KeyboardTypeOptions;
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
 }
@@ -17,7 +18,8 @@ export const Input = ({
   placeholder, 
   value, 
   onChangeText, 
-  secureTextEntry, 
+  secureTextEntry,
+  editable,
   keyboardType, 
   autoCapitalize 
 }: InputProps) => (
@@ -26,7 +28,9 @@ export const Input = ({
     <View style={styles.inputContainer}>
       <TextInput
         placeholder={placeholder}
-        placeholderTextColor="#475569"
+        accessibilityLabel={label}
+        editable={editable}
+        placeholderTextColor="#94a3b8"
         value={value}
         onChangeText={onChangeText}
         secureTextEntry={secureTextEntry}
@@ -50,6 +54,8 @@ export const Button = ({ title, onPress, variant = 'primary', disabled }: Button
   <TouchableOpacity
     onPress={onPress}
     activeOpacity={0.8}
+    accessibilityRole="button"
+    accessibilityState={{ disabled: !!disabled }}
     disabled={disabled}
     style={[
       styles.button,
@@ -92,6 +98,7 @@ const styles = StyleSheet.create({
     minHeight: verticalScale(24),
   },
   button: {
+    minHeight: 48,
     paddingVertical: verticalScale(16),
     borderRadius: moderateScale(16),
     alignItems: 'center',

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, TextInput, FlatList, ScrollView, ActivityIndicator, RefreshControl, useWindowDimensions, Modal } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { reportCache } from '../lib/reportCache';
 import { FeedbackModal } from '../components/FeedbackModal';
 import { 
   ArrowLeft, 
@@ -28,6 +28,17 @@ import { useIsFocused } from '@react-navigation/native';
 
 const CACHE_KEY = '@participant_registry_cache';
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function loadRegistryRows<T>(loadPage: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>) {
+  const rows: T[] = [];
+  const pageSize = 500;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await loadPage(from, from + pageSize - 1);
+    if (error) throw new Error(error.message);
+    rows.push(...(data ?? []));
+    if (!data || data.length < pageSize) return rows;
+  }
+}
 
 const getDisplayRole = (item: any) => {
   const baseRole = item.role || 'Participant';
@@ -102,13 +113,15 @@ const ParticipantRow = React.memo(({
           <View style={[styles.statusBadge, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }, isSmallScreen && { paddingHorizontal: 6, paddingVertical: 3 }]}>
             <Text style={[styles.statusText, { color: '#10b981' }, isSmallScreen && { fontSize: 9 }]}>{isSmallScreen ? 'Scanned' : 'Scanned In'}</Text>
           </View>
-        ) : (
+        ) : onCheckIn ? (
           <TouchableOpacity 
             onPress={() => onCheckIn(item)}
             style={[styles.manualCheckBtn, isSmallScreen && { paddingHorizontal: 8, paddingVertical: 4 }]}
           >
             <Text style={[styles.manualCheckText, isSmallScreen && { fontSize: 9 }]}>Check-In</Text>
           </TouchableOpacity>
+        ) : (
+          <Text style={styles.detailsText}>Pending</Text>
         )}
       </View>
     </View>
@@ -164,7 +177,8 @@ const RegistryListView = React.memo(({
   );
 });
 
-const ParticipantListScreen = ({ navigation }: any) => {
+const ParticipantListScreen = ({ navigation, route }: any) => {
+  const requestedEventId = route.params?.eventId;
   const { width } = useWindowDimensions();
   const isSmallScreen = width < 420;
   const isExtraSmall = width < 370;
@@ -250,63 +264,68 @@ const ParticipantListScreen = ({ navigation }: any) => {
 
   const fetchData = async (forceRefresh = false) => {
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const cacheKey = `${CACHE_KEY}:${session.user.id}:${requestedEventId || 'legacy'}`;
       // 1. Check Cache
-      if (!forceRefresh) {
-        const cachedStr = await AsyncStorage.getItem(CACHE_KEY);
-        if (cachedStr) {
-          const cached = JSON.parse(cachedStr);
-          if (Date.now() - cached.timestamp < CACHE_TTL) {
+      if (!requestedEventId && !forceRefresh) {
+        try {
+          const cached = JSON.parse(reportCache.getItem(cacheKey) ?? 'null');
+          if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
             setActiveEvent(cached.event);
             setRegistrations(cached.regs || []);
             setAttendance(cached.att || []);
-            setIsLoading(false);
-            setRefreshing(false);
-            return; // Skip DB fetch
+            return;
           }
+        } catch {
+          // A full or unreadable local cache must not block live records.
         }
       }
 
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-
       // 2. Fetch Latest Event
-      const eventRes = await fetch(`${API_URL}/api/events`, {
+      const eventPath = requestedEventId ? `/api/events/${encodeURIComponent(requestedEventId)}` : '/api/events';
+      const eventRes = await fetch(`${API_URL}${eventPath}`, {
         headers: { 'Authorization': `Bearer ${session.access_token}` }
       });
       const eventData = await eventRes.json();
-      
-      if (eventData.status === 'success' && eventData.data.length > 0) {
-        const event = eventData.data[0];
-        setActiveEvent(event);
+      if (!eventRes.ok || eventData.status !== 'success') {
+        throw new Error(eventData.message || 'The event could not be loaded.');
+      }
+      const event = requestedEventId ? eventData.data : eventData.data[0];
+      if (event) {
 
-        // 3. Fetch Registrations
-        const { data: regs, error: regError } = await supabase
-          .from('registrations')
-          .select('*, quota:event_quotas(name)')
-          .eq('event_id', event.id);
-        
-        if (regError) throw regError;
-        setRegistrations(regs || []);
+        const [regs, att] = await Promise.all([
+          loadRegistryRows((from, to) => supabase
+            .from('registrations')
+            .select('*, quota:event_quotas(name)')
+            .eq('event_id', event.id)
+            .order('id')
+            .range(from, to)),
+          loadRegistryRows((from, to) => supabase
+            .from('attendance')
+            .select('*')
+            .eq('event_id', event.id)
+            .order('id')
+            .range(from, to)),
+        ]);
+        const eventSummary = { id: event.id, name: event.name, lifecycle: event.lifecycle };
+        setActiveEvent(eventSummary);
+        setRegistrations(regs);
+        setAttendance(att);
 
-        // 4. Fetch Attendance
-        const { data: att, error: attError } = await supabase
-          .from('attendance')
-          .select('*')
-          .eq('event_id', event.id);
-        
-        if (attError) throw attError;
-        setAttendance(att || []);
-
-        // 5. Save to Cache
-        await AsyncStorage.setItem(CACHE_KEY, JSON.stringify({
-          timestamp: Date.now(),
-          event: event,
-          regs: regs || [],
-          att: att || []
-        }));
+        if (!requestedEventId) {
+          reportCache.setItem(cacheKey, JSON.stringify({
+            timestamp: Date.now(), event: eventSummary, regs, att,
+          }));
+        }
+      } else {
+        setActiveEvent(null);
+        setRegistrations([]);
+        setAttendance([]);
       }
     } catch (error) {
       console.error('Participant Registry Fetch Error:', error);
+      showAlert('Could not load participant records', error instanceof Error ? error.message : 'Please try again.', 'error');
     } finally {
       setIsLoading(false);
       setRefreshing(false);
@@ -317,7 +336,7 @@ const ParticipantListScreen = ({ navigation }: any) => {
     if (isFocused) {
       fetchData();
     }
-  }, [isFocused]);
+  }, [isFocused, requestedEventId]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -852,7 +871,7 @@ const ParticipantListScreen = ({ navigation }: any) => {
             tabRole="All"
             selectedStudentType={selectedStudentType}
             isSmallScreen={isSmallScreen}
-            onCheckIn={handleCheckIn}
+            onCheckIn={activeEvent?.lifecycle === 'archived' ? undefined : handleCheckIn}
             refreshing={refreshing}
             onRefresh={onRefresh}
             isLoading={isLoading}
@@ -868,7 +887,7 @@ const ParticipantListScreen = ({ navigation }: any) => {
               tabRole="Student"
               selectedStudentType={selectedStudentType}
               isSmallScreen={isSmallScreen}
-              onCheckIn={handleCheckIn}
+              onCheckIn={activeEvent?.lifecycle === 'archived' ? undefined : handleCheckIn}
               refreshing={refreshing}
               onRefresh={onRefresh}
               isLoading={isLoading}
@@ -885,7 +904,7 @@ const ParticipantListScreen = ({ navigation }: any) => {
               tabRole="Employee"
               selectedStudentType={selectedStudentType}
               isSmallScreen={isSmallScreen}
-              onCheckIn={handleCheckIn}
+              onCheckIn={activeEvent?.lifecycle === 'archived' ? undefined : handleCheckIn}
               refreshing={refreshing}
               onRefresh={onRefresh}
               isLoading={isLoading}
@@ -902,7 +921,7 @@ const ParticipantListScreen = ({ navigation }: any) => {
               tabRole="Guest"
               selectedStudentType={selectedStudentType}
               isSmallScreen={isSmallScreen}
-              onCheckIn={handleCheckIn}
+              onCheckIn={activeEvent?.lifecycle === 'archived' ? undefined : handleCheckIn}
               refreshing={refreshing}
               onRefresh={onRefresh}
               isLoading={isLoading}

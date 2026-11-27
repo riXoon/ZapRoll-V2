@@ -13,7 +13,7 @@ import {
   FlatList,
   RefreshControl
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { reportCache } from '../lib/reportCache';
 import { 
   ArrowLeft, 
   Search, 
@@ -83,7 +83,7 @@ const ResponseRow = React.memo(({ item, activeSession, template, navigation, sty
   );
 });
 
-const SummaryView = React.memo(({ analytics, activeSession, isSmallScreen, navigation, styles }: any) => {
+const SummaryView = React.memo(({ analytics, activeSession, isSmallScreen, navigation, styles, eventId }: any) => {
   if (!analytics) return (
     <View style={styles.emptyState}>
       <AlertCircle color="#475569" size={48} />
@@ -252,6 +252,7 @@ const SummaryView = React.memo(({ analytics, activeSession, isSmallScreen, navig
                   style={styles.viewAllCommentsBtn}
                   onPress={() => {
                     navigation.navigate('EvaluationComments', {
+                      eventId,
                       questionId: item.id,
                       questionLabel: item.label,
                       activeSession: activeSession,
@@ -337,7 +338,8 @@ interface Template {
   session_type: string;
 }
 
-const EvaluationAnalyticsScreen = ({ navigation }: any) => {
+const EvaluationAnalyticsScreen = ({ navigation, route }: any) => {
+  const requestedEventId = route.params?.eventId;
   const insets = useSafeAreaInsets();
   const { width: screenWidth } = useWindowDimensions();
   const isSmallScreen = screenWidth < 380;
@@ -393,8 +395,11 @@ const EvaluationAnalyticsScreen = ({ navigation }: any) => {
 
   const fetchData = async (forceRefresh = false) => {
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const cacheKey = `${CACHE_KEY}:${session.user.id}:${requestedEventId || 'legacy'}`;
       if (!forceRefresh) {
-        const cachedStr = await AsyncStorage.getItem(CACHE_KEY);
+        const cachedStr = reportCache.getItem(cacheKey);
         if (cachedStr) {
           const cached = JSON.parse(cachedStr);
           if (Date.now() - cached.timestamp < CACHE_TTL) {
@@ -410,16 +415,14 @@ const EvaluationAnalyticsScreen = ({ navigation }: any) => {
       }
 
       if (!refreshing) setIsLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-
       // 1. Fetch Event
       const eventRes = await fetch(`${API_URL}/api/events`, {
         headers: { 'Authorization': `Bearer ${session.access_token}` }
       });
       const eventData = await eventRes.json();
       if (eventData.status !== 'success' || eventData.data.length === 0) return;
-      const activeEvent = eventData.data[0];
+      const activeEvent = requestedEventId ? eventData.data.find((item: any) => item.id === requestedEventId) : eventData.data[0];
+      if (!activeEvent) return;
       setEvent(activeEvent);
 
       // 2. Fetch Templates
@@ -446,7 +449,7 @@ const EvaluationAnalyticsScreen = ({ navigation }: any) => {
       setResponses(respData || []);
       setFilteredResponses(respData || []);
 
-      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify({
+      reportCache.setItem(cacheKey, JSON.stringify({
         timestamp: Date.now(),
         event: activeEvent,
         templates: tMap,
@@ -665,6 +668,7 @@ const EvaluationAnalyticsScreen = ({ navigation }: any) => {
             {summaryMounted && (
               <View style={[styles.tabContentContainer, activeTab !== 'Summary' && styles.hiddenContent]}>
                 <SummaryView 
+                  eventId={event?.id}
                   analytics={analytics} 
                   activeSession={activeSession}
                   isSmallScreen={isSmallScreen} 
