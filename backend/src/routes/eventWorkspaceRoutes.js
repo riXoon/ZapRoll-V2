@@ -2,6 +2,7 @@ const express = require('express');
 const { timingSafeEqual } = require('node:crypto');
 const db = require('../config/supabase');
 const auth = require('../middleware/authMiddleware');
+const renderStudentCheckin = require('../views/studentCheckin');
 
 const router = express.Router();
 const eventFields = 'id,name,event_date,event_mode,lifecycle,timezone,registration_opens_at,pre_reg_deadline,pre_reg_manual,pre_reg_open,archived_at';
@@ -10,6 +11,7 @@ const roleFields = 'id,name,student_priority,registration_capacity,registration_
 const venueFields = 'id,name,capacity,role_caps';
 const sessionFields = 'id,venue_id,title,starts_at,ends_at,checkin_opens_at,walkins_open_at,capacity,role_caps,attendance_url,feedback_url,reserved_students';
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const summitId = 'dd191aad-6220-4683-96e0-c82e051acb9c';
 const sessionForms = new Map([
   ['evaluation', { template: 'feedback_template', link: 'feedback_url' }],
   ['attendance', { template: 'attendance_template', link: 'attendance_url' }],
@@ -187,6 +189,7 @@ router.get('/forms/:formId', async (req, res) => {
   const template = session?.[form.template];
   if (!template || !session[form.link]) fail(404, 'Form not found.');
   const event = await eventById(session.event_id);
+  if (type === 'attendance' && event.id === summitId) fail(410, 'Use the central student check-in QR at the attendance desk.');
   if (event.lifecycle === 'archived') fail(410, 'This form is closed.');
   if (event.event_mode !== 'scheduled' || event.lifecycle !== 'active') fail(404, 'Form not found.');
   if (type === 'attendance') {
@@ -238,6 +241,9 @@ router.post('/:id/submissions/:action', async (req, res) => {
   confirmFormsIntegration(req);
   const { action, id } = req.params;
   if (!['pre-registration', 'attendance', 'feedback'].includes(action)) fail(404, 'Unknown submission type.');
+  if (action === 'attendance' && id.toLowerCase() === summitId) {
+    fail(410, 'Use the central student check-in QR at the attendance desk.');
+  }
   const { session_id: sessionId, email, student_number: studentNumber, role_id: roleId, full_name: fullName, metadata, answers } = req.body || {};
   const studentCheckin = action === 'attendance' && studentNumber !== undefined;
   if (studentCheckin && (email !== undefined || !validStudentNumber(studentNumber))) {
@@ -280,6 +286,56 @@ function validStudentNumber(value) {
     && /^[a-z\d][a-z\d-]{0,63}$/i.test(value.replace(/\s/g, '').replace(/[‐‑‒–—−]/g, '-'));
 }
 
+const attemptsByAddress = new Map();
+let attemptWindow = 0;
+
+router.route('/:id/student-checkin')
+  .all(async (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    res.set('Referrer-Policy', 'no-referrer');
+    if (req.params.id.toLowerCase() !== summitId) fail(404, 'Check-in page not found.');
+    const event = await eventById(req.params.id, eventFields);
+    if (event.event_mode !== 'scheduled' || event.lifecycle !== 'active') {
+      return res.status(410).send(renderStudentCheckin(event.name, { closed: true }));
+    }
+    res.locals.event = event;
+    next();
+  })
+  .get((req, res) => res.send(renderStudentCheckin(res.locals.event.name)))
+  .post(async (req, res) => {
+    const { event } = res.locals;
+    const studentNumber = req.body?.student_number;
+    if (!validStudentNumber(studentNumber)) {
+      return res.status(400).send(renderStudentCheckin(event.name, { error: 'Enter a valid student number.' }));
+    }
+    const currentWindow = Math.floor(Date.now() / 60000);
+    if (currentWindow !== attemptWindow) {
+      attemptsByAddress.clear();
+      attemptWindow = currentWindow;
+    }
+    const address = (process.env.VERCEL && req.get('x-vercel-forwarded-for')) || req.ip;
+    const attempts = (attemptsByAddress.get(address) || 0) + 1;
+    attemptsByAddress.set(address, attempts);
+    if (attempts > 120) {
+      res.set('Retry-After', String(60 - Math.floor(Date.now() / 1000) % 60));
+      return res.status(429).send(renderStudentCheckin(event.name, { error: 'Please try again in a minute or ask the check-in desk for help.' }));
+    }
+
+    try {
+      const receipt = await result(db.rpc('submit_central_student_attendance', {
+        p_event: event.id,
+        p_student_number: studentNumber,
+      }));
+      return res.status(receipt.created ? 201 : 200).send(renderStudentCheckin(event.name, { receipt }));
+    } catch (error) {
+      if (![400, 404, 409, 410].includes(error.statusCode)) {
+        console.error('Central student check-in failed', error.code || error.statusCode || 'unknown');
+        return res.status(503).send(renderStudentCheckin(event.name, { error: 'Check-in is temporarily unavailable. Try again or ask the check-in desk for help.' }));
+      }
+      return res.status(error.statusCode).send(renderStudentCheckin(event.name, { error: error.message }));
+    }
+  });
+
 router.use(auth, async (req, res, next) => {
   const profile = await result(db.from('admin_profiles').select('id').eq('id', req.user.id).maybeSingle());
   if (!profile) fail(403, 'An admin profile is required.');
@@ -310,7 +366,13 @@ router.get('/:id', async (req, res) => {
   const event = response.error?.code === '42703' && response.error.message.includes('shared_venue_capacity')
     ? await eventById(id) : await result(response);
   if (!event) fail(404, 'Event not found.');
-  res.json({ data: { event, ...await eventConfiguration(event.id, true) } });
+  res.json({ data: {
+    event,
+    ...await eventConfiguration(event.id, true),
+    ...(event.id === summitId && event.event_mode === 'scheduled' && event.lifecycle !== 'archived' && {
+      central_attendance_path: `/api/event-workspace/${event.id}/student-checkin`,
+    }),
+  } });
 });
 
 const questionTypes = new Set(['rating', 'text', 'choice', 'likert', 'privacy', 'signature', 'header']);

@@ -9,7 +9,7 @@ Use the existing `/forms/{eventId}?type=pre-registration` URL. The CCS Summit ev
 1. Fetch `GET /api/event-workspace/{eventId}/config?form=pre-registration` on entry. Show the closed state if `data.event.pre_reg_open` is false or the API returns `410`.
 2. For CCS Summit, `data.event.student_pre_registration_only` is true. Render the questions directly from `data.form.pages` and omit the participant category picker. Each page contains a title, description, and questions. Use each question’s `id` as its answer key and honor its `required`, `subtype`, `options`, and `hasOther` values. If `data.form` is null, show that registration is unavailable.
 3. Collect full name with the surname, first name, and middle name hint, and verify the email address using the forms app’s existing flow. Render `student_program` as an academic program question. The Student role is assigned by ZapRoll.
-4. Render all four Day 1, three Day 2, and three Day 3 choices. Store the chosen labels under `day_1_session_preference`, `day_2_session_preference`, and `day_3_session_preference`. The first two are required. Preferences can include activities without a scheduled check-in session.
+4. Render all four Day 1, three Day 2, and three Day 3 choices. Submit the chosen labels under `day_1_session_preference`, `day_2_session_preference`, and `day_3_session_preference`. The first two are required. ZapRoll stores the matching schedule IDs in `metadata.session_selections` by day without allocating seats.
 
 ## Submit from the forms server
 
@@ -18,6 +18,12 @@ Send `POST /api/event-workspace/{eventId}/submissions/pre-registration` with the
 A first submission returns `201`. A retry for an existing registration returns `200` and its existing registration ID. Show the API’s validation or capacity message for `400` or `409`. A `410` means registration closed after the page was opened.
 
 ## Session attendance and student numbers
+
+Use **Settings → Check-in → Central student check-in** to display the event QR at the staffed Summit desk. ZapRoll serves the page directly at `/api/event-workspace/{eventId}/student-checkin`. It accepts one student number, finds the selected session for the current Manila date, and shows the session and venue after recording check-in. Existing registrations with saved choice labels are resolved against the same schedule IDs.
+
+Session switches and capacity rules apply. A missing selection, closed session, or unmatched registration stops check-in and does not create a participant or attendance record. The attendance CSV continues to include session, venue, and check-in time. The desk confirms that the student checked in for that session.
+
+## Session-link integration for other scheduled events
 
 Use one attendance QR per session. Its public URL is `/forms/{sessionId}?type=attendance`. On that page, fetch `GET /api/event-workspace/forms/{sessionId}?type=attendance` to get the event ID, session title, check-in state, and any optional attendance questions. A draft returns `404`. An archived event or a closed check-in window returns `410`.
 

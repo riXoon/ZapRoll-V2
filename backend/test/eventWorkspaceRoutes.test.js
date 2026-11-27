@@ -6,6 +6,7 @@ const eventId = '49b030b7-fd5e-41bb-ac4c-36f982ab41ed';
 const roleId = '560a856b-233d-41af-975c-d43b656acd2b';
 const alumniRoleId = '35f8565c-cb9c-4dd9-8146-5f43210c76af';
 const sessionId = '4b3162cb-3d32-414e-bf11-8d358999a140';
+const summitId = 'dd191aad-6220-4683-96e0-c82e051acb9c';
 let lifecycle = 'active';
 let manualOpen = false;
 let checkinOpen = false;
@@ -32,7 +33,8 @@ before(async () => {
   };
   const values = {
     events: () => [{ id: eventId, event_mode: 'scheduled', lifecycle, name: 'Sample', timezone: 'Asia/Manila',
-      pre_reg_manual: true, pre_reg_open: manualOpen, student_pre_registration_only: studentPreRegistrationOnly }],
+      pre_reg_manual: true, pre_reg_open: manualOpen, student_pre_registration_only: studentPreRegistrationOnly },
+    { id: summitId, event_mode: 'scheduled', lifecycle, name: 'CCS Summit', timezone: 'Asia/Manila' }],
     event_roles: () => sharedPreRegistration ?? (collegeReport ? [{ ...role, name: 'Student' }] : [role]),
     event_schedule: () => {
       session.checkin_opens_at = new Date(Date.now() + (checkinOpen ? -3600000 : 3600000)).toISOString();
@@ -89,6 +91,11 @@ before(async () => {
     },
     rpc(name, payload) {
       submission = { name, payload };
+      if (name === 'submit_central_student_attendance') {
+        return Promise.resolve({ data: {
+          created: true, session_title: 'Quiz Bee <Final>', venue_name: 'Gymnasium',
+        } });
+      }
       if (name === 'set_scheduled_attendance_override') {
         attendanceOverride = payload.p_open;
         return Promise.resolve({ data: { id: payload.p_session, attendance_open_override: attendanceOverride } });
@@ -104,6 +111,7 @@ before(async () => {
   } };
   const app = express();
   app.use(express.json());
+  app.use(express.urlencoded({ extended: false }));
   app.use('/workspace', require('../src/routes/eventWorkspaceRoutes'));
   app.use((error, req, res, next) => res.status(error.statusCode || 500).json({ message: error.message }));
   await new Promise((resolve, reject) => {
@@ -116,6 +124,36 @@ before(async () => {
 after(async () => {
   delete process.env.ZAPROLL_FORMS_API_KEY;
   if (server) await new Promise(resolve => server.close(resolve));
+});
+
+test('central attendance serves a one-field page and returns the selected session and venue', async () => {
+  const path = `/${summitId}/student-checkin`;
+  const response = await fetch(base + path);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  const page = await response.text();
+  assert.match(page, /name="student_number"/);
+  assert.doesNotMatch(page, /name="(?:email|session_id)"/);
+
+  const submitted = await fetch(base + path, {
+    method: 'POST',
+    body: new URLSearchParams({ student_number: '00-42', session_id: sessionId }),
+  });
+  assert.equal(submitted.status, 201);
+  assert.deepEqual(submission, {
+    name: 'submit_central_student_attendance',
+    payload: { p_event: summitId, p_student_number: '00-42' },
+  });
+  const receipt = await submitted.text();
+  assert.match(receipt, /Quiz Bee &lt;Final&gt;/);
+  assert.match(receipt, /Gymnasium/);
+  assert.doesNotMatch(receipt, /00-42/);
+
+  const legacy = await fetch(`${base}/${summitId}/submissions/attendance`, {
+    method: 'POST', headers: { 'X-ZapRoll-Forms-Key': 'local-test-key' },
+  });
+  assert.equal(legacy.status, 410);
+  assert.equal((await fetch(`${base}/${eventId}/student-checkin`)).status, 404);
 });
 
 test('public config hides drafts and closes archived links', async () => {

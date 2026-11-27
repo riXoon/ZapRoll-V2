@@ -24,7 +24,9 @@ const QRGeneratorScreen = ({ route, navigation }: any) => {
   const scheduled = route.params?.eventMode === 'scheduled';
   const qrSize = Math.min(200, width - 110);
   const purpose = isPreReg || type === 'pre-reg' ? 'pre-registration' : type === 'session-attendance' ? 'attendance' : 'feedback';
-  const scheduledInstructions = `Scan to open the ${purpose} form.`;
+  const scheduledInstructions = type === 'student-checkin'
+    ? 'Scan and enter your student number to check in for your selected session.'
+    : `Scan to open the ${purpose} form.`;
   const [isDownloading, setIsDownloading] = useState(false);
 
   // Feedback Modal State

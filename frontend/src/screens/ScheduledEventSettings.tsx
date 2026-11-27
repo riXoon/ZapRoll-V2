@@ -11,6 +11,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { calendarDay, newEventRequestId, workspaceRequest } from '../lib/eventWorkspace';
 import { type SelectedEvent, useEventSelection } from '../lib/eventSelection';
+import { API_URL } from '../config/api';
 
 type Role = {
   id: string; name: string; registration_capacity: number; student_priority: boolean;
@@ -31,7 +32,10 @@ type SettingsEvent = SelectedEvent & {
   pre_reg_manual?: boolean; pre_reg_open?: boolean; student_pre_registration_only?: boolean;
   shared_venue_capacity?: boolean;
 };
-type Workspace = { event: SettingsEvent; roles: Role[]; venues: Venue[]; sessions: Session[]; pre_registration_url?: string | null };
+type Workspace = {
+  event: SettingsEvent; roles: Role[]; venues: Venue[]; sessions: Session[];
+  pre_registration_url?: string | null; central_attendance_path?: string;
+};
 type Editor = { action: 'settings' | 'role' | 'venue' | 'session' | 'feedback'; values: Record<string, string>; priority?: boolean };
 type VenueResize = {
   role_caps: Venue['role_caps'];
@@ -407,6 +411,8 @@ export default function ScheduledEventSettings({ navigation, event, activeTab, s
     },
   });
   const editable = selected?.event.lifecycle !== 'archived';
+  const centralAttendanceUrl = selected?.central_attendance_path
+    ? API_URL.replace(/\/$/, '') + selected.central_attendance_path : null;
   const savedIdentity = {
     name: selected?.event.name || '', event_date: selected?.event.event_date || '',
     registration_opens_at: localDateTime(selected?.event.registration_opens_at ?? null, 'Asia/Manila'),
@@ -546,7 +552,7 @@ export default function ScheduledEventSettings({ navigation, event, activeTab, s
         </>}
         {field('reserved_students', 'Seats protected for pre-registered students', true)}
       </Card>}
-      <Card setup={isSetup} title={isSetup ? 'Attendance form' : 'Attendance Form'} icon={QrCode}>{field('attendance_url', 'Attendance form URL (optional)')}</Card>
+      {!centralAttendanceUrl && <Card setup={isSetup} title={isSetup ? 'Attendance form' : 'Attendance Form'} icon={QrCode}>{field('attendance_url', 'Attendance form URL (optional)')}</Card>}
       <SaveSettings title="Save session" disabled={busy || (sharedVenueCapacity && !sessionVenue)} onPress={() => save(editor)} />
       <Action title="Cancel" disabled={busy} onPress={() => setEditor(null)} />
     </> : editor?.action === 'feedback' ? <View style={styles.card}>
@@ -779,6 +785,11 @@ export default function ScheduledEventSettings({ navigation, event, activeTab, s
             </View>;
           })}
         </Card>}
+        {!isSetup && centralAttendanceUrl && <Card tone={palette.amber} title="Central student check-in" icon={QrCode}>
+          <Text style={registration.detail}>Use this QR at the attendance desk on every event day.</Text>
+          <FormLink label="Central student check-in" value={centralAttendanceUrl} qr={centralAttendanceUrl}
+            onPress={url => showQr(url, 'Central student check-in', 'student-checkin')} />
+        </Card>}
         <Card setup={isSetup} tone={palette.amber} title={isSetup ? "Event schedule" : "Attendance sessions"} icon={Calendar}>
           {!isSetup && !selected.sessions.length && <Text style={registration.detail}>Add sessions in Setup first.</Text>}
           {visibleDays.length > 1 && <View accessibilityRole="tablist" style={registration.dayPicker}>
@@ -833,7 +844,7 @@ export default function ScheduledEventSettings({ navigation, event, activeTab, s
                        {session.attendance_open_override === undefined && <Text style={registration.detail}>This session follows its schedule. Manual controls require a backend update.</Text>}
                        {manualAttendance && <Action title="Use schedule" disabled={busy} onPress={() => setAttendanceStatus(session.id, null)} />}
                      </>}
-                    {editable && <FormLink label="Attendance form" value={session.attendance_url} qr={session.attendance_qr_url} onPress={url => showQr(url, session.title, 'session-attendance')} />}
+                    {editable && !centralAttendanceUrl && <FormLink label="Attendance form" value={session.attendance_url} qr={session.attendance_qr_url} onPress={url => showQr(url, session.title, 'session-attendance')} />}
                     {!isSetup && <ExportControl title="Export session attendance" disabled={busy} onPress={() => void share('attendance', session.id)} />}
                   </View>
                 );
@@ -844,7 +855,7 @@ export default function ScheduledEventSettings({ navigation, event, activeTab, s
           {isSetup && editable && <Action add title="Add event day" disabled={busy || !!editor}
             onPress={() => setDatePicker({ key: 'add-day', mode: 'date' })} />}
         </Card>
-        {!isSetup && editable && <FormBuilderCard tone={palette.amber} title="Attendance Form Builder" action="Design Attendance Form"
+        {!isSetup && editable && !centralAttendanceUrl && <FormBuilderCard tone={palette.amber} title="Attendance Form Builder" action="Design Attendance Form"
           prompt="Choose a session" empty="Add a session in Setup to design its attendance form."
           disabled={busy} choices={sessionFormChoices('attendance')} />}
         {!isSetup && <Card tone={palette.amber} title="Attendance Records" icon={ClipboardCheck}>

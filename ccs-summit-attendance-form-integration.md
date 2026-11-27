@@ -1,5 +1,9 @@
 # CCS Summit attendance form integration guide
 
+**CCS Summit uses central student check-in.** Use the event QR in **Settings → Check-in → Central student check-in**. The backend serves the student-number page, resolves the current day's selected session, and records the check-in. See the [Summit integration guide](ccs-summit-public-form-integration.md#session-attendance-and-student-numbers).
+
+The session-link instructions below apply to other scheduled events that use custom attendance forms.
+
 Build one web form at `/forms/{sessionId}?type=attendance` and use a separate QR for each session. The UUID in the path is the ZapRoll session ID. Load the session title and saved questions from the ZapRoll API on each visit so admins can update the form and schedule from ZapRoll. The forms server sends check-ins to ZapRoll, which applies attendance hours, capacity, and duplicate handling.
 
 ## Connect the forms server

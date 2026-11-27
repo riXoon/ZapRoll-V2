@@ -110,6 +110,31 @@ test('Registration builder opens the selected session in attendance mode', async
   }));
 });
 
+test('Summit attendance shows one event QR and keeps session controls', async () => {
+  const event = { id: 'summit', name: 'CCS Summit', event_date: '2026-12-02', timezone: 'Asia/Manila',
+    event_mode: 'scheduled', lifecycle: 'active', registration_opens_at: null, pre_reg_deadline: null } as const;
+  const path = '/api/event-workspace/summit/student-checkin';
+  const sessions = ['Quiz Bee', 'Technical Competition'].map(title => ({
+    id: title, title, starts_at: '2026-12-02T02:15:00Z', ends_at: '2026-12-02T09:00:00Z',
+    attendance_open_override: null, attendance_url: 'https://old.example.edu/session',
+    attendance_qr_url: 'https://old.example.edu/session',
+  }));
+  jest.mocked(workspaceRequest).mockResolvedValueOnce({
+    event, roles: [], venues: [], sessions, central_attendance_path: path,
+  });
+  const navigate = jest.fn();
+  render(<ScheduledEventSettings event={event} navigation={{ navigate } as never} activeTab="event-day" />);
+
+  fireEvent.press(await screen.findByLabelText('Central student check-in QR code'));
+  expect(screen.getAllByLabelText(/QR code$/)).toHaveLength(1);
+  expect(screen.getByLabelText('Attendance for Quiz Bee')).toBeEnabled();
+  expect(screen.getByLabelText('Attendance for Technical Competition')).toBeEnabled();
+  expect(screen.queryByText('Design Attendance Form')).toBeNull();
+  expect(navigate).toHaveBeenCalledWith('QRGenerator', expect.objectContaining({
+    url: expect.stringContaining(path), type: 'student-checkin',
+  }));
+});
+
 test('check-in shows the sessions for the selected day', async () => {
   const event = { id: 'summit', name: 'CCS Summit', event_date: '2040-12-02', timezone: 'Asia/Manila',
     event_mode: 'scheduled', lifecycle: 'draft', registration_opens_at: null, pre_reg_deadline: null } as const;
